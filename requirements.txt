@@ -1,0 +1,13 @@
+# Analysis / dataset pipeline (runs in Colab and on a laptop).
+numpy>=1.24
+pillow>=10.0
+matplotlib>=3.7
+tqdm>=4.65
+
+# Training (Colab GPU). Torch is pre-installed in Colab; pinned loosely here
+# so `pip install -r requirements.txt` also works on a local machine.
+torch>=2.1
+torchvision>=0.16
+
+# Tests
+pytest>=7.4
