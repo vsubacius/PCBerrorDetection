@@ -32,5 +32,11 @@ firmware/**/managed_components/
 # OS
 .DS_Store
 
-# Training runs: checkpoints are large and regenerable from the saved config.
-runs/**/*.pt
+# Training runs. The plan requires saving the config, seeds, metrics and the
+# exact model file behind every result, so those are committed: a student
+# checkpoint is only ~274 KB. Excluded are last.pt (redundant with best.pt)
+# and teacher weights, which are ~45 MB each.
+runs/**/last.pt
+runs/teacher*/*.pt
+!runs/**/best.pt
+runs/teacher*/best.pt
