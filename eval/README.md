@@ -3,7 +3,18 @@
 | Module | Purpose |
 | --- | --- |
 | `metrics.py` | **the one shared metric module** — every run in the matrix is scored here |
+| `evaluate_run.py` | scores a trained run on a fold, float32, and writes `eval_<fold>.json` |
 | `gate_analysis.py` | Stage-1 classical gate separability vs misalignment |
+
+```bash
+python eval/evaluate_run.py --run runs/control_s0 --fold val --target-fa 0.05
+```
+
+`evaluate_run.py` produces per-class and macro AP, defect-level recall and precision at
+chosen thresholds, false alarms with **the same fold's templates run as defect-free
+boards**, and the diagnostics behind the class-imbalance decision. Thresholds are chosen
+on validation and reused unchanged; `--fold test` exists so the frozen configuration can
+be scored once, never for tuning.
 
 ## `metrics.py`
 
@@ -90,15 +101,25 @@ the labelling rule agree.
 
 ## `gate_analysis.py`
 
-See the project README for the measured table. Two corrections to apply to that script before
-its numbers go in the paper:
+**Fixed: the threshold report was unsound.** It derived `thr@98` from a quantile of the
+defect-tile scores and never checked the recall that threshold achieves. When the quantile
+lands on a tie mass at zero — exactly what a 5×5 erosion produces — the reported pair is
+not an operating point the gate can reach.
 
-* **It reports a requested recall it never verifies.** `thr@98` is the 2% quantile of the
-  defect-tile score distribution, but when that quantile is 0 — which it is for a 5×5 erosion
-  — the gate cannot actually achieve 98% recall, because tiles scoring 0 can never fire. The
-  table needs an *achieved* `recall@thr` column.
-* Consequently the published `erode2` rows are internally inconsistent: `skip@98 = 98.4%` and
-  `recall@skip50 = 86.9%` describe the **same** operating point (threshold 0). Directly
-  measured: **15.4% of defect tiles score exactly 0 under a 5×5 erosion**, versus 0.0% under
-  3×3. `Findings.md`'s claim that 5×5 reaches 98% recall is wrong, and 3×3 is the right
-  classical gate.
+That is the origin of the wrong claim in `Findings.md`. For `erode2`, `skip@98 = 98.4%`
+and `recall@skip50 = 86.9%` described the **same** threshold of zero; the gate never
+reached 98% recall at all. Measured directly: **15.4% of defect tiles score exactly 0
+under a 5×5 erosion**, versus **0.0% under 3×3**.
+
+The table now reports:
+
+* `ceiling` — the best defect-tile recall *any* threshold ≥ 0 can reach. A tile scoring
+  exactly 0 only fires under a negative threshold, which fires on every clean tile too, so
+  such defects are unrecoverable.
+* `recall@thr` — the recall actually achieved, so a target can never again be assumed.
+* `n/a` where the target cannot be met at any threshold.
+
+**Conclusion: radius 1 (3×3) is the classical gate.** Radius 2 caps tile recall near 85%
+however it is tuned. The firmware hard-codes radius 1 for this reason, and
+`tests/test_gate_parity.py` holds the C++ and numpy implementations bit-identical so a
+threshold chosen here transfers to the chip unchanged.
