@@ -1,0 +1,7 @@
+# Name,     Type, SubType, Offset,   Size,  Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+phy_init,   data, phy,     0xf000,   0x1000,
+factory,    app,  factory, 0x10000,  3M,
+# Spare partition so a model can later be flashed independently of the app
+# ("idf.py app-flash"); the current build embeds the model in .rodata instead.
+model,      data, spiffs,  ,         1M,
