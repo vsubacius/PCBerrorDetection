@@ -19,9 +19,12 @@ See [`CLAUDE.md`](CLAUDE.md) for the full project plan, deliverables and timelin
 | Tiling + label pipeline | **done** — `data/`, [`notebooks/01_dataset_and_tiles.ipynb`](notebooks/01_dataset_and_tiles.ipynb) |
 | Tile-grid choice validated against defect sizes | **done** — 160/120 confirmed, see below |
 | Stage-1 classical gate characterised | **done** — `eval/gate_analysis.py`, see below |
-| Dummy model on the ESP32-S3 | not started |
+| Stage-2 student designed, frozen, profiled | **done** — `training/models.py`, see below |
+| Export path PyTorch → ONNX → ESP-DL | **done** — `export/`, operators verified |
+| Benchmark firmware | **written, not yet run on hardware** — `firmware/pcb_bench/` |
+| Model running on the ESP32-S3 | blocked on hardware access |
 | Teacher + control student, QAT | not started |
-| Defect-aware KD, learned gate, FOMO/Hinton comparisons | not started |
+| Defect-aware KD, learned gate, Hinton KD comparison | not started |
 
 ## Quickstart
 
@@ -42,7 +45,15 @@ python eval/gate_analysis.py                   # how separable clean vs defectiv
 ```
 
 ```bash
-python -m pytest tests -q                      # unit tests for the labelling rule
+python training/models.py --layers             # student parameters, MACs, activations
+```
+
+```bash
+python export/to_espdl.py --in-channels 1 --out export/artifacts   # ONNX + operator check
+```
+
+```bash
+python -m pytest tests -q                      # 47 tests: labelling, student, export, gate parity
 ```
 
 Or open [`notebooks/01_dataset_and_tiles.ipynb`](notebooks/01_dataset_and_tiles.ipynb) in Colab
@@ -53,11 +64,12 @@ straight from GitHub — it does the download, the plots and the build, and need
 ```
 data/      download, tiling, labelling, dataset loader   (no raw data committed)
 notebooks/ Colab notebooks
-training/  model definitions, losses, train loops         (empty)
-export/    quantization + ESP-DL / TFLM conversion        (empty)
-firmware/  ESP-IDF project for the XIAO ESP32-S3          (empty)
+training/  student model (done); losses, train loops      (planned)
+export/    ONNX + ESP-PPQ -> .espdl
+firmware/  ESP-IDF benchmark app for the XIAO ESP32-S3
 eval/      metrics, plots, on-device log parsing
 paper/     4–6 page workshop-style write-up               (empty)
+tests/     47 tests, no hardware required
 ```
 
 Core modules, all importable from `data/`:
@@ -70,6 +82,15 @@ Core modules, all importable from `data/`:
 | `tile_dataset.py` | loads a fold, cuts tiles on the fly, input reps A/B/C, augmentation |
 | `grid_sweep.py` | defect-size stats and the tile/stride trade-off table |
 | `eval/gate_analysis.py` | Stage-1 classical gate separability vs misalignment |
+
+And, outside `data/`:
+
+| Module | Purpose |
+| --- | --- |
+| `training/models.py` | the frozen Stage-2 student, plus a hook-based parameter/MAC/activation profiler |
+| `export/operators.py` | ESP-DL's int8 operator list, vendored with provenance |
+| `export/to_espdl.py` | ONNX export, artefact stripping, operator check, ESP-PPQ stage |
+| `firmware/pcb_bench/` | ESP-IDF benchmark app: parity check, profiling, 25-tile cascade |
 
 ## Dataset
 
@@ -173,6 +194,68 @@ Consequences for the project:
 * These numbers are tile-level recall on pre-registered pairs, not end-to-end defect recall.
   They set up the gate-threshold sweep (energy per board vs. defect recall) but do not replace
   it.
+
+## Stage-2 student: 61K parameters, 1.33M MACs per tile
+
+The classifier every run in the experiment matrix shares — a depthwise-separable CNN
+(`3x3 -> 16`; separable blocks `32, 64, 96, 128, 128, 128`; global average pool; dense 6),
+with only `in_channels` changing across the input-mode ablation. Full geometry and design
+notes in [`training/README.md`](training/README.md).
+
+| | mode A (1 ch) | modes B/C (2 ch) | team target |
+| --- | --- | --- | --- |
+| parameters | 60,966 | 61,110 | ~63K |
+| int8 weights | 57.5 KB | 57.6 KB | ~63 KB |
+| MACs / tile | 1.33 M | 1.56 M | ~1.5 M |
+| peak activation | 31.2 KB | 37.5 KB | 16 KB |
+
+**Two of the three team targets are met; the 16 KB activation budget was not reachable.**
+A 160x160 int8 tile is 25 KB of input buffer on its own, so hitting 16 KB would mean halving
+the tile resolution — and against 512 KB of SRAM and 8 MB of PSRAM that budget is not
+binding. The design keeps full resolution instead, and hits the MAC budget by reducing 4x
+*before* the stem convolution (a stride-2 stem on the full tile would cost 0.92 M MACs by
+itself). The downsample is an **average** pool, not a max: copper covers ~81% of a board, so
+a 2x2 OR saturates to all-ones. It is safe for this dataset because no annotated defect box
+is thinner than 23 px on either axis (p1 of the min-dimension over all 10,013 boxes).
+
+## Deployment: ESP-DL, and why the TFLM fallback is not needed
+
+```
+PyTorch -> ONNX (opset 18) -> ESP-PPQ -> .espdl -> ESP-DL -> ESP-IDF
+```
+
+Checked against ESP-DL commit `5989f4a` (2026-11-02):
+
+* **Every operator in the student is supported in int8 on the ESP32-S3.** The exported graph
+  is 30 nodes of `Conv`, `Relu`, `AveragePool`, `GlobalAveragePool`, `Flatten`, `Gemm`.
+  `Conv` restricts `groups` to "1 or input_channels", which is exactly depthwise.
+* **ESP-DL supplies the plan's parity check as a built-in.** `export_test_values=True`
+  embeds a PC input/output pair in the model and `dl::Model::test()` compares the device
+  against it. `dl::Model::profile()` gives per-layer latency and a memory breakdown across
+  internal RAM, PSRAM and flash, which is most of what the plan asks the firmware to measure.
+* `BatchNormalization` is **not** in the operator table, so it must fold into the preceding
+  convolution — which is why the student's convolutions carry no bias.
+
+Two traps found while building the path, both now handled and regression-tested:
+
+* **An untrained model exports `Identity` nodes, which ESP-DL does not implement.** With
+  default BatchNorm statistics every folded convolution bias is the same zero vector, ONNX
+  deduplicates them, and the duplicates become `Identity` aliases. A trained model exports
+  cleanly. This matters because the plan calls for pushing an *untrained* student through the
+  path first — it would have looked like a toolchain blocker.
+* **PyTorch's dynamo exporter writes weights to an `.onnx.data` sidecar**, so copying the
+  `.onnx` alone to Colab would quietly lose them. Both exporters are now forced to emit a
+  single self-contained file.
+
+The main accuracy risk is **not** operator support: the ESP32-S3 quantizes **per-tensor,
+symmetric, with power-of-two scales** (the P4 gets per-channel Conv/Gemm; the S3 does not).
+Per-tensor weight scales are the known weak point of depthwise convolutions, so the
+depthwise layers should be expected to carry most of the int8 error. The documented
+escalation is `w8a16` or per-layer promotion — applied to every run, or not at all.
+
+One piece of good news for the input: the pooled binary tile takes values
+`{0, 1/4, 1/2, 3/4, 1}`, all exactly representable at `exponent = -6`, so input
+quantization is lossless.
 
 ## Conventions
 
