@@ -393,3 +393,67 @@ def test_real_split_ceilings_match_the_documented_values():
             assert ceiling == 1.0
         else:
             assert ceiling == pytest.approx(0.9993, abs=1e-4)
+
+
+# --------------------------------------------------------------------------- #
+# average precision (checkpoint-selection metric)
+# --------------------------------------------------------------------------- #
+
+def test_average_precision_is_one_for_a_perfect_ranking():
+    from metrics import tile_average_precision
+
+    targets = np.zeros((10, N_CLASSES))
+    targets[:3, 0] = 1.0
+    scores = np.zeros((10, N_CLASSES))
+    scores[:3, 0] = 10.0                      # the positives rank first
+    per_class, macro = tile_average_precision(targets * 0 + scores, targets,
+                                              np.zeros_like(targets, bool))
+    assert per_class[0] == pytest.approx(1.0)
+    assert macro == pytest.approx(1.0), "classes without positives must not count"
+
+
+def test_average_precision_is_low_for_an_inverted_ranking():
+    from metrics import tile_average_precision
+
+    targets = np.zeros((10, N_CLASSES))
+    targets[:3, 0] = 1.0
+    scores = np.zeros((10, N_CLASSES))
+    scores[:3, 0] = -10.0                     # the positives rank last
+    per_class, _ = tile_average_precision(scores, targets,
+                                          np.zeros_like(targets, bool))
+    assert per_class[0] < 0.5
+
+
+def test_average_precision_excludes_ignored_entries():
+    from metrics import tile_average_precision
+
+    targets = np.zeros((6, N_CLASSES))
+    targets[:2, 0] = 1.0
+    scores = np.zeros((6, N_CLASSES))
+    scores[:2, 0] = 5.0
+    scores[2:4, 0] = 50.0                     # would rank above the positives
+    ignore = np.zeros_like(targets, bool)
+    ignore[2:4, 0] = True                     # but they are ignored
+    per_class, _ = tile_average_precision(scores, targets, ignore)
+    assert per_class[0] == pytest.approx(1.0)
+
+
+def test_average_precision_is_nan_for_a_class_with_no_positives():
+    from metrics import tile_average_precision
+
+    targets = np.zeros((5, N_CLASSES))
+    per_class, macro = tile_average_precision(
+        np.zeros((5, N_CLASSES)), targets, np.zeros_like(targets, bool))
+    assert np.all(np.isnan(per_class))
+    assert np.isnan(macro)
+
+
+def test_average_precision_beats_chance_on_a_noisy_but_informative_score():
+    from metrics import tile_average_precision
+
+    rng = np.random.default_rng(0)
+    targets = (rng.random((2000, N_CLASSES)) < 0.1).astype(float)
+    scores = targets + rng.normal(0, 0.7, targets.shape)
+    _, macro = tile_average_precision(scores, targets,
+                                      np.zeros_like(targets, bool))
+    assert 0.2 < macro < 1.0

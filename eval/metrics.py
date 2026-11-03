@@ -524,3 +524,49 @@ def choose_thresholds_for_false_alarm_rate(
         else:
             hi = mid
     return best
+
+
+def tile_average_precision(
+    scores: np.ndarray,
+    targets: np.ndarray,
+    ignore: np.ndarray,
+) -> tuple[np.ndarray, float]:
+    """Per-class and macro average precision over non-ignored tile entries.
+
+    Threshold-free, so it is the right thing to select checkpoints on: picking
+    a model by recall at a fixed threshold would entangle model selection with
+    the threshold choice, and the thresholds are only set afterwards, on
+    validation int8 outputs.
+
+    Average precision is computed as the sum of ``precision * d(recall)`` over
+    the ranked predictions, with tied scores kept in rank order. Classes with
+    no positives come back as NaN and are excluded from the macro mean.
+
+    Args:
+        scores: ``(n_tiles, 6)`` scores (logits are fine -- only the ranking
+            matters).
+        targets: ``(n_tiles, 6)`` 0/1 labels.
+        ignore: ``(n_tiles, 6)`` mask; True entries are excluded.
+
+    Returns:
+        ``(per_class, macro)``.
+    """
+    scores = np.asarray(scores, dtype=np.float64)
+    targets = np.asarray(targets, dtype=np.float64)
+    keep = ~np.asarray(ignore, dtype=bool)
+
+    per_class = np.full(NUM_CLASSES, np.nan)
+    for c in range(NUM_CLASSES):
+        mask = keep[:, c]
+        y = targets[mask, c] > 0
+        if y.sum() == 0 or y.size == 0:
+            continue
+        order = np.argsort(-scores[mask, c], kind="mergesort")
+        hits = y[order]
+        tp = np.cumsum(hits)
+        precision = tp / np.arange(1, len(hits) + 1)
+        per_class[c] = float((precision * hits).sum() / hits.sum())
+
+    finite = per_class[~np.isnan(per_class)]
+    macro = float(finite.mean()) if finite.size else float("nan")
+    return per_class, macro

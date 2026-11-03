@@ -31,3 +31,6 @@ firmware/**/managed_components/
 
 # OS
 .DS_Store
+
+# Training runs: checkpoints are large and regenerable from the saved config.
+runs/**/*.pt
