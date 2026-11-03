@@ -24,8 +24,23 @@ alignment slightly):
 Augmentation happens at the *image* level before cutting, so a defect box is
 transformed with it and tile labels stay correct.
 
-:class:`TorchTileDataset` wraps this as a ``torch.utils.data.Dataset`` yielding
-one tile at a time; torch is imported lazily so the module works without it.
+:class:`TileImageDataset` wraps this as a ``torch.utils.data.Dataset`` for
+training: one item is one *augmented image*, yielding all of its tiles at
+once. That matters for speed -- augmentation and tiling are image-level work,
+so doing them per tile repeats them ``n_tiles`` times. Measured on the train
+fold, per-tile access costs 16.9 ms against 0.07 ms amortised per image, i.e.
+5.6 minutes of data loading per epoch against under two seconds.
+:func:`collate_tiles` flattens a batch of images back into a batch of tiles.
+
+:class:`TorchTileDataset` keeps the per-tile interface for debugging and for
+parity tests, and is ~25x slower by construction.
+
+Both seed their augmentation deterministically from ``(seed, epoch, index)``,
+so every DataLoader worker produces a different, reproducible stream. A single
+shared ``Generator`` would be forked identically into every worker and give
+each one the same augmentations.
+
+torch is imported lazily so the module works without it.
 """
 
 from __future__ import annotations
@@ -262,12 +277,111 @@ class TileData:
         return np.where(n_pos > 0, (n_val - n_pos) / np.maximum(n_pos, 1), 1.0)
 
 
+def _rng_for(seed: int, epoch: int, index: int) -> np.random.Generator:
+    """A generator determined by ``(seed, epoch, index)`` and nothing else.
+
+    Seeding per item rather than holding one shared ``Generator`` is what makes
+    augmentation both worker-safe and reproducible: DataLoader workers are
+    forked copies, so a shared generator would hand every worker the same
+    sequence, and a given item would augment differently depending on which
+    worker happened to pick it up.
+    """
+    return np.random.default_rng([seed, epoch, index])
+
+
+class TileImageDataset:
+    """``torch.utils.data.Dataset`` where one item is one image's tiles.
+
+    Use this for training. Augmentation and tiling are image-level work, so
+    serving a whole image at once amortises them over ``n_tiles`` tiles instead
+    of repeating them for each one.
+
+    Args:
+        data: the loaded fold.
+        representation: ``"A"``, ``"B"`` or ``"C"``.
+        aug: augmentation config, or None for val/test.
+        seed: base seed for the deterministic per-item generators.
+        tiles_per_image: sample this many tiles per image instead of all of
+            them. Decorrelates batches -- all tiles of one item otherwise share
+            an augmentation -- and lets batch size be tuned independently of
+            the grid.
+        drop_clean_frac: drop this fraction of clean tiles, sampled per access.
+
+    Yields ``(x, y, ignore)`` of shapes ``(T, C, tile, tile)``, ``(T, 6)``,
+    ``(T, 6)``, where ``T`` is ``tiles_per_image`` or ``n_tiles``.
+    """
+
+    def __init__(self, data: TileData, representation: str = "B",
+                 aug: AugmentConfig | None = None, seed: int = 0,
+                 tiles_per_image: int | None = None,
+                 drop_clean_frac: float = 0.0):
+        import torch  # noqa: F401  (fail early with a clear message)
+
+        if tiles_per_image is not None and not 0 < tiles_per_image <= data.n_tiles:
+            raise ValueError(
+                f"tiles_per_image must be in (0, {data.n_tiles}], "
+                f"got {tiles_per_image}"
+            )
+        if not 0.0 <= drop_clean_frac < 1.0:
+            raise ValueError(f"drop_clean_frac must be in [0, 1), got {drop_clean_frac}")
+
+        self.data = data
+        self.representation = representation
+        self.aug = aug
+        self.seed = seed
+        self.tiles_per_image = tiles_per_image
+        self.drop_clean_frac = drop_clean_frac
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        """Re-roll augmentation for a new epoch. Call before each one."""
+        self.epoch = int(epoch)
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+    def __getitem__(self, i: int):
+        import torch
+
+        rng = _rng_for(self.seed, self.epoch, i)
+        x, y, ignore = self.data.tiles(i, self.representation, self.aug, rng)
+
+        keep = np.arange(len(x))
+        if self.drop_clean_frac > 0:
+            clean = ~(y > 0).any(axis=1) & ~ignore.any(axis=1)
+            drop = clean & (rng.random(len(x)) < self.drop_clean_frac)
+            keep = np.flatnonzero(~drop)
+            if keep.size == 0:                    # never hand back an empty batch
+                keep = np.array([int(rng.integers(len(x)))])
+        if self.tiles_per_image is not None:
+            replace = keep.size < self.tiles_per_image
+            keep = rng.choice(keep, self.tiles_per_image, replace=replace)
+
+        return (
+            torch.from_numpy(np.ascontiguousarray(x[keep])),
+            torch.from_numpy(np.ascontiguousarray(y[keep])),
+            torch.from_numpy(np.ascontiguousarray(ignore[keep].astype(np.float32))),
+        )
+
+
+def collate_tiles(batch):
+    """Flatten a batch of per-image tile groups into a batch of tiles.
+
+    ``(B, T, C, H, W) -> (B*T, C, H, W)``, and likewise for targets and masks.
+    """
+    import torch
+
+    xs, ys, igs = zip(*batch)
+    return torch.cat(xs, 0), torch.cat(ys, 0), torch.cat(igs, 0)
+
+
 class TorchTileDataset:
     """``torch.utils.data.Dataset`` over individual tiles.
 
-    Indexing is ``(image, tile)`` flattened, so a shuffled DataLoader still
-    mixes tiles from different images. Augmentation is re-rolled per image
-    access, which is what we want: every epoch sees a different transform.
+    Indexing is ``(image, tile)`` flattened. Kept for debugging and parity
+    tests: it re-augments and re-cuts a whole 640x640 pair for every single
+    tile, so it is ~``n_tiles`` times slower than :class:`TileImageDataset`
+    and should not be used for training.
     """
 
     def __init__(self, data: TileData, representation: str = "B",
@@ -278,7 +392,9 @@ class TorchTileDataset:
         self.data = data
         self.representation = representation
         self.aug = aug
-        self.rng = np.random.default_rng(seed)
+        self.seed = seed
+        self.epoch = 0
+        select_rng = np.random.default_rng(seed)
         self.index: list[tuple[int, int]] = [
             (i, t) for i in range(len(data)) for t in range(data.n_tiles)
         ]
@@ -286,10 +402,13 @@ class TorchTileDataset:
             keep = []
             for i, t in self.index:
                 clean = not (data.y[i, t] > 0).any() and not data.ignore[i, t].any()
-                if clean and self.rng.random() < drop_clean_frac:
+                if clean and select_rng.random() < drop_clean_frac:
                     continue
                 keep.append((i, t))
             self.index = keep
+
+    def set_epoch(self, epoch: int) -> None:
+        self.epoch = int(epoch)
 
     def __len__(self) -> int:
         return len(self.index)
@@ -298,7 +417,8 @@ class TorchTileDataset:
         import torch
 
         i, t = self.index[k]
-        x, y, ig = self.data.tiles(i, self.representation, self.aug, self.rng)
+        rng = _rng_for(self.seed, self.epoch, k)
+        x, y, ig = self.data.tiles(i, self.representation, self.aug, rng)
         return (
             torch.from_numpy(np.ascontiguousarray(x[t])),
             torch.from_numpy(y[t]),

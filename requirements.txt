@@ -9,5 +9,16 @@ tqdm>=4.65
 torch>=2.1
 torchvision>=0.16
 
+# Export: PyTorch -> ONNX (opset 18) -> ESP-PPQ -> .espdl
+onnx>=1.15
+onnxruntime>=1.17          # tests only: checks the exported graph's numerics
+# onnxscript>=0.1          # only needed for --exporter dynamo
+
 # Tests
 pytest>=7.4
+
+# NOT installable from here: esp-ppq pins `python >=3.11,<3.13`, so it cannot
+# coexist with a newer interpreter. Run the quantization stage in Colab or a
+# 3.12 virtualenv:
+#     pip uninstall -y ppq
+#     pip install git+https://github.com/espressif/esp-ppq.git

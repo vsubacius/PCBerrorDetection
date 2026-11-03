@@ -18,11 +18,29 @@ by +-N px to show how fast the separation decays.
 Reported per (feature, shift):
 
 * ``AUC``           -- ranking quality of the feature as a defect score
-* ``thr@98``        -- feature threshold that keeps 98% of defect tiles
-* ``skip@98``       -- share of *clean* tiles skipped at that threshold; this is
+* ``ceiling``       -- the highest defect-tile recall *any* usable threshold can
+                       reach, i.e. the share of defect tiles scoring above zero.
+                       A tile scoring exactly 0 can only be made to fire by a
+                       negative threshold, which fires on every clean tile too,
+                       so such tiles are unrecoverable.
+* ``thr``           -- smallest threshold reaching the target recall, or ``n/a``
+                       when the ceiling is below it
+* ``recall@thr``    -- the recall actually achieved there
+* ``skip@thr``      -- share of *clean* tiles skipped at that threshold; this is
                        the Stage-2 compute the cascade actually saves
 * ``recall@skip50`` -- defect-tile recall if the gate is tuned to skip half the
                        clean tiles instead
+
+.. warning::
+
+   An earlier version of this script reported ``thr@98``/``skip@98`` as a
+   quantile of the defect-tile scores without ever checking the recall that
+   threshold achieves. When the 2% quantile lands on a tie mass at zero -- which
+   is exactly what happens for a 5x5 erosion -- the reported pair is not an
+   operating point the gate can reach. That is why ``Findings.md`` claimed a
+   5x5 erosion skips 98% of clean tiles at 98% defect recall: in reality
+   ``skip@98 = 98.4%`` and ``recall = 86.9%`` described the *same* threshold of
+   zero. The ``ceiling`` and ``recall@thr`` columns exist so that cannot recur.
 
 Run from the repo root::
 
@@ -107,6 +125,28 @@ def auc(scores_pos: np.ndarray, scores_neg: np.ndarray) -> float:
     return float((ranks[:n_p].sum() - n_p * (n_p + 1) / 2) / (n_p * n_n))
 
 
+def threshold_for_recall(s_pos: np.ndarray, target: float) -> tuple[float | None, float]:
+    """Smallest threshold >= 0 whose defect-tile recall reaches ``target``.
+
+    The gate fires on ``score > thr``, so recall is non-increasing in ``thr``
+    and the *smallest* qualifying threshold is the one that skips the most
+    clean tiles while still meeting the target. Returns ``(None, ceiling)``
+    when even ``thr = 0`` cannot reach the target, which happens whenever more
+    than ``1 - target`` of defect tiles score exactly zero.
+    """
+    ordered = np.sort(s_pos)
+    ceiling = float((s_pos > 0).mean())
+    if ceiling < target:
+        return None, ceiling
+    candidates = np.unique(np.concatenate([[0.0], ordered[ordered >= 0]]))
+    recalls = 1.0 - np.searchsorted(ordered, candidates, side="right") / len(ordered)
+    ok = np.flatnonzero(recalls >= target)
+    if ok.size == 0:
+        return None, ceiling
+    best = ok[-1]          # largest threshold still meeting the target
+    return float(candidates[best]), float(recalls[best])
+
+
 def analyse(data: TileData, features=("raw", "erode1", "erode2"),
             shifts=(0, 1, 2, 3), seed: int = 0) -> list[dict]:
     rows = []
@@ -114,9 +154,7 @@ def analyse(data: TileData, features=("raw", "erode1", "erode2"),
         for shift in shifts:
             scores, pos, clean = tile_scores(data, feature, shift, seed)
             s_pos, s_neg = scores[pos], scores[clean]
-            # The gate fires when score > thr, so the threshold that keeps
-            # TARGET_RECALL of defect tiles is the low quantile of s_pos.
-            thr = float(np.quantile(s_pos, 1.0 - TARGET_RECALL))
+            thr, achieved = threshold_for_recall(s_pos, TARGET_RECALL)
             thr2 = float(np.quantile(s_neg, TARGET_SKIP))
             rows.append({
                 "feature": feature, "shift": shift,
@@ -124,8 +162,13 @@ def analyse(data: TileData, features=("raw", "erode1", "erode2"),
                 "median_pos": float(np.median(s_pos)),
                 "median_clean": float(np.median(s_neg)),
                 "zero_clean": float((s_neg == 0).mean()),
+                "zero_pos": float((s_pos == 0).mean()),
+                "ceiling": float((s_pos > 0).mean()),
                 "auc": auc(s_pos, s_neg),
-                "thr": thr, "skip": float((s_neg <= thr).mean()),
+                "thr": thr,
+                "recall_at_thr": achieved,
+                "skip": (float((s_neg <= thr).mean()) if thr is not None
+                         else float("nan")),
                 "recall_skip50": float((s_pos > thr2).mean()),
             })
     return rows
@@ -133,17 +176,24 @@ def analyse(data: TileData, features=("raw", "erode1", "erode2"),
 
 def format_table(rows: list[dict]) -> str:
     head = (f"{'feature':>8}{'shift':>7}{'med clean':>11}{'med defect':>12}"
-            f"{'AUC':>8}{'thr@98':>8}{'skip@98':>9}{'recall@skip50':>15}")
+            f"{'AUC':>8}{'ceiling':>9}{'thr':>6}{'recall@thr':>12}"
+            f"{'skip@thr':>10}{'recall@skip50':>15}")
     out = [head, "-" * len(head)]
     last = None
     for r in rows:
         if last is not None and r["feature"] != last:
             out.append("")
         last = r["feature"]
+        unreachable = r["thr"] is None
+        thr_text = "n/a" if unreachable else f"{r['thr']:.0f}"
+        recall_text = ("--" if unreachable
+                       else f"{r['recall_at_thr'] * 100:.1f}%")
+        skip_text = "--" if unreachable else f"{r['skip'] * 100:.1f}%"
         out.append(
             f"{r['feature']:>8}{str(r['shift']) + 'px':>7}{r['median_clean']:>11.0f}"
-            f"{r['median_pos']:>12.0f}{r['auc']:>8.4f}{r['thr']:>8.0f}"
-            f"{r['skip'] * 100:>8.1f}%{r['recall_skip50'] * 100:>14.1f}%"
+            f"{r['median_pos']:>12.0f}{r['auc']:>8.4f}"
+            f"{r['ceiling'] * 100:>8.1f}%{thr_text:>6}{recall_text:>12}"
+            f"{skip_text:>10}{r['recall_skip50'] * 100:>14.1f}%"
         )
     return "\n".join(out)
 
@@ -168,16 +218,25 @@ def main() -> None:
     print()
     print(format_table(rows))
     print(
-        f"\nthr@{TARGET_RECALL:.0%}        = threshold that keeps {TARGET_RECALL:.0%} of defect tiles"
-        f"\nskip@{TARGET_RECALL:.0%}       = share of clean tiles skipped there (= Stage-2 compute saved)"
+        f"\nceiling         = highest defect-tile recall any threshold >= 0 can reach"
+        f"\n                  (defect tiles scoring exactly 0 are unrecoverable)"
+        f"\nthr             = smallest threshold reaching {TARGET_RECALL:.0%} recall, or n/a"
+        f"\nrecall@thr      = recall actually achieved there -- check this, do not assume it"
+        f"\nskip@thr        = share of clean tiles skipped there (= Stage-2 compute saved)"
         f"\nrecall@skip{TARGET_SKIP:.0%}   = defect-tile recall when tuned to skip {TARGET_SKIP:.0%} of clean tiles"
         "\nshift           = template jittered up to +-N px per image (registration error)"
     )
-    print("\nshare of clean tiles scoring exactly 0:")
+    print("\nshare of tiles scoring exactly 0 (clean / DEFECT -- the second is the ceiling loss):")
     for name in args.features:
-        vals = [f"{r['shift']}px {r['zero_clean'] * 100:.1f}%"
+        vals = [f"{r['shift']}px {r['zero_clean'] * 100:.0f}%/{r['zero_pos'] * 100:.0f}%"
                 for r in rows if r["feature"] == name]
         print(f"  {name:<8}" + "   ".join(vals))
+    unreachable = [r for r in rows if r["thr"] is None]
+    if unreachable:
+        print(f"\nNOTE: {len(unreachable)} (feature, shift) combination(s) cannot reach "
+              f"{TARGET_RECALL:.0%} defect-tile recall at any threshold, because too many "
+              f"defect tiles score exactly zero. Those rows show n/a rather than a "
+              f"threshold that does not exist.")
 
 
 if __name__ == "__main__":
