@@ -1,0 +1,55 @@
+{
+  "run_id": "input_B_s0",
+  "fold": "val",
+  "precision_mode": "float32 (PC)",
+  "target_board_false_alarm_rate": 0.05,
+  "thresholds_logit": [
+    -1.9570778608322144,
+    -1.0142602920532227,
+    -0.45706990361213684,
+    -1.5094919204711914,
+    -5.802816867828369,
+    -4.603636741638184
+  ],
+  "macro_ap": 0.8203198451128948,
+  "per_class_ap": {
+    "open": 0.8254771693247099,
+    "short": 0.8348198724380274,
+    "mousebite": 0.6500205813109935,
+    "spur": 0.7187311656436695,
+    "copper": 0.966821016804751,
+    "pin-hole": 0.9260492651552176
+  },
+  "reachability_ceiling": 0.9985443959243085,
+  "defects_unreachable": 2,
+  "defect_recall": 0.8449781659388647,
+  "defect_precision": 0.6396832380114387,
+  "per_class_recall": {
+    "open": 0.8784313725490196,
+    "short": 0.8190954773869347,
+    "mousebite": 0.6277372262773723,
+    "spur": 0.8461538461538461,
+    "copper": 0.9855072463768116,
+    "pin-hole": 0.975609756097561
+  },
+  "n_defects": 1374,
+  "n_found": 1161,
+  "true_positives": 1454,
+  "false_positives": 819,
+  "ignored_firings": 238,
+  "clean_board_false_alarm_rate": 0.03,
+  "clean_tile_false_alarm_rate": 0.0012,
+  "imbalance": {
+    "threshold_logit": 0.0,
+    "entries_scored": 28547,
+    "true_positive_rate": 0.06480540862437384,
+    "predicted_positive_rate": 0.054856902651767264,
+    "n_predicted_positive": 1566,
+    "n_actually_positive": 1850,
+    "recall_at_threshold": 0.6848648648648649,
+    "max_probability": 1.0,
+    "mean_probability": 0.05795060470700264,
+    "p99_probability": 0.9992111921310425,
+    "share_of_positives_scoring_above_half": 0.6848648648648649
+  }
+}

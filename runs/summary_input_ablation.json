@@ -1,0 +1,74 @@
+{
+  "control_s0": {
+    "representation": "A",
+    "loss_kind": "plain",
+    "seed": 0,
+    "best_val_macro_ap": 0.4193239941597254,
+    "best_epoch": 13,
+    "epochs_run": 22
+  },
+  "control_s1": {
+    "representation": "A",
+    "loss_kind": "plain",
+    "seed": 1,
+    "best_val_macro_ap": 0.47405000311745743,
+    "best_epoch": 16,
+    "epochs_run": 25
+  },
+  "control_s2": {
+    "representation": "A",
+    "loss_kind": "plain",
+    "seed": 2,
+    "best_val_macro_ap": 0.4668860114490568,
+    "best_epoch": 13,
+    "epochs_run": 22
+  },
+  "input_B_s0": {
+    "representation": "B",
+    "loss_kind": "plain",
+    "seed": 0,
+    "best_val_macro_ap": 0.8203198451128948,
+    "best_epoch": 18,
+    "epochs_run": 27
+  },
+  "input_B_s1": {
+    "representation": "B",
+    "loss_kind": "plain",
+    "seed": 1,
+    "best_val_macro_ap": 0.8017027924010757,
+    "best_epoch": 12,
+    "epochs_run": 21
+  },
+  "input_B_s2": {
+    "representation": "B",
+    "loss_kind": "plain",
+    "seed": 2,
+    "best_val_macro_ap": 0.776236018777131,
+    "best_epoch": 16,
+    "epochs_run": 25
+  },
+  "input_C_s0": {
+    "representation": "C",
+    "loss_kind": "plain",
+    "seed": 0,
+    "best_val_macro_ap": 0.8423241201137754,
+    "best_epoch": 15,
+    "epochs_run": 24
+  },
+  "input_C_s1": {
+    "representation": "C",
+    "loss_kind": "plain",
+    "seed": 1,
+    "best_val_macro_ap": 0.7942767751604629,
+    "best_epoch": 13,
+    "epochs_run": 22
+  },
+  "input_C_s2": {
+    "representation": "C",
+    "loss_kind": "plain",
+    "seed": 2,
+    "best_val_macro_ap": 0.7784492343173023,
+    "best_epoch": 18,
+    "epochs_run": 27
+  }
+}
