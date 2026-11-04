@@ -1,0 +1,55 @@
+{
+  "run_id": "reweight_only_s1",
+  "fold": "val",
+  "precision_mode": "float32 (PC)",
+  "target_board_false_alarm_rate": 0.05,
+  "thresholds_logit": [
+    1.6952729225158691,
+    2.2211525440216064,
+    2.894061803817749,
+    3.794292688369751,
+    -2.267763376235962,
+    0.3501647710800171
+  ],
+  "macro_ap": 0.7568678341076761,
+  "per_class_ap": {
+    "open": 0.7726574488950717,
+    "short": 0.7897589624382434,
+    "mousebite": 0.49820891714300225,
+    "spur": 0.6277272653869372,
+    "copper": 0.9639141109838237,
+    "pin-hole": 0.8889402997989783
+  },
+  "reachability_ceiling": 0.9985443959243085,
+  "defects_unreachable": 2,
+  "defect_recall": 0.7096069868995634,
+  "defect_precision": 0.7020383693045563,
+  "per_class_recall": {
+    "open": 0.807843137254902,
+    "short": 0.7839195979899497,
+    "mousebite": 0.39416058394160586,
+    "spur": 0.5085470085470085,
+    "copper": 0.9806763285024155,
+    "pin-hole": 0.8926829268292683
+  },
+  "n_defects": 1374,
+  "n_found": 975,
+  "true_positives": 1171,
+  "false_positives": 497,
+  "ignored_firings": 191,
+  "clean_board_false_alarm_rate": 0.03,
+  "clean_tile_false_alarm_rate": 0.0012,
+  "imbalance": {
+    "threshold_logit": 0.0,
+    "entries_scored": 28547,
+    "true_positive_rate": 0.06480540862437384,
+    "predicted_positive_rate": 0.10971380530353453,
+    "n_predicted_positive": 3132,
+    "n_actually_positive": 1850,
+    "recall_at_threshold": 0.8405405405405405,
+    "max_probability": 1.0,
+    "mean_probability": 0.12298355251550674,
+    "p99_probability": 0.9999337792396545,
+    "share_of_positives_scoring_above_half": 0.8405405405405405
+  }
+}

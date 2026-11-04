@@ -108,8 +108,32 @@ def kd_runs() -> list[TrainConfig]:
     return runs
 
 
+def reweight_sweep_runs() -> list[TrainConfig]:
+    """Disentangle the two things `reweight_only` changes at once.
+
+    The plan defines the reweighted loss as the defect-tile weight `alpha`
+    *times* per-class inverse-frequency weights, so `reweight_only` moves both
+    away from `reference` together. It measured worse than `reference` on every
+    class, but that result cannot say which half is responsible, and the plan
+    also requires `alpha` to be tuned on validation rather than assumed.
+
+    One seed each: this is a direction-finding sweep, not a reported result.
+    """
+    variants = [
+        ("a1_cw",    1.0, True),    # class weights only
+        ("a3_nocw",  3.0, False),   # defect-tile weight only
+        ("a15_cw",   1.5, True),    # a gentler version of the full loss
+        ("a5_cw",    5.0, True),    # a stronger one
+    ]
+    return [TrainConfig(run_id=f"rw_{name}_s0", representation=REFERENCE_MODE,
+                        loss_kind="reweighted", alpha=alpha,
+                        use_class_weights=class_weights, seed=0)
+            for name, alpha, class_weights in variants]
+
+
 RUN_SETS = {
     "control": control_runs,
+    "reweight_sweep": reweight_sweep_runs,
     "input_ablation": input_ablation_runs,
     "teacher": teacher_runs,
     "reweight_only": reweight_only_runs,
