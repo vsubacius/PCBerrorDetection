@@ -1,0 +1,54 @@
+{
+  "rw_a1_cw_s0": {
+    "model": "student",
+    "representation": "C",
+    "loss_kind": "reweighted",
+    "alpha": 1.0,
+    "lam": 1.0,
+    "temperature": 2.0,
+    "use_class_weights": true,
+    "seed": 0,
+    "best_val_macro_ap": 0.7347301553518077,
+    "best_epoch": 25,
+    "epochs_run": 30
+  },
+  "rw_a3_nocw_s0": {
+    "model": "student",
+    "representation": "C",
+    "loss_kind": "reweighted",
+    "alpha": 3.0,
+    "lam": 1.0,
+    "temperature": 2.0,
+    "use_class_weights": false,
+    "seed": 0,
+    "best_val_macro_ap": 0.812477417454617,
+    "best_epoch": 15,
+    "epochs_run": 24
+  },
+  "rw_a15_cw_s0": {
+    "model": "student",
+    "representation": "C",
+    "loss_kind": "reweighted",
+    "alpha": 1.5,
+    "lam": 1.0,
+    "temperature": 2.0,
+    "use_class_weights": true,
+    "seed": 0,
+    "best_val_macro_ap": 0.7544162002401498,
+    "best_epoch": 14,
+    "epochs_run": 23
+  },
+  "rw_a5_cw_s0": {
+    "model": "student",
+    "representation": "C",
+    "loss_kind": "reweighted",
+    "alpha": 5.0,
+    "lam": 1.0,
+    "temperature": 2.0,
+    "use_class_weights": true,
+    "seed": 0,
+    "best_val_macro_ap": 0.7104098621619747,
+    "best_epoch": 16,
+    "epochs_run": 25
+  }
+}

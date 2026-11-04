@@ -86,6 +86,25 @@ def reweight_only_runs() -> list[TrainConfig]:
                         use_class_weights=True, seed=s) for s in SEEDS]
 
 
+def reweight_only_nocw_runs() -> list[TrainConfig]:
+    """`reweight_only` testing the defect-tile weight *on its own*.
+
+    The plan bundles the defect-tile weight with per-class inverse-frequency
+    weights, so the original `reweight_only` moved both at once. The
+    reweight_sweep showed the class weights are what does the damage -- alone
+    they cost 0.108 macro AP at seed 0, three times the seed spread -- while
+    alpha = 3 on its own costs 0.030, which is inside the noise.
+
+    Since step 6 established that class balancing is *not* needed for training
+    to work, it is optional here, and the validation evidence says to leave it
+    off. That makes this row test what it is named for.
+    """
+    return [TrainConfig(run_id=f"reweight_only_nocw_s{s}",
+                        representation=REFERENCE_MODE, loss_kind="reweighted",
+                        alpha=DEFAULT_ALPHA, use_class_weights=False, seed=s)
+            for s in SEEDS]
+
+
 def kd_runs() -> list[TrainConfig]:
     """The prior-method comparison and the novel contribution.
 
@@ -137,6 +156,7 @@ RUN_SETS = {
     "input_ablation": input_ablation_runs,
     "teacher": teacher_runs,
     "reweight_only": reweight_only_runs,
+    "reweight_only_nocw": reweight_only_nocw_runs,
     "kd": kd_runs,
 }
 
