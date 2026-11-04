@@ -37,6 +37,7 @@ firmware/**/managed_components/
 # checkpoint is only ~274 KB. Excluded are last.pt (redundant with best.pt)
 # and teacher weights, which are ~45 MB each.
 runs/**/last.pt
+runs/**/state.pt
 runs/teacher*/*.pt
 !runs/**/best.pt
 runs/teacher*/best.pt

@@ -42,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from losses import LOSS_KINDS, LossConfig, MaskedTileLoss  # noqa: E402
 from metrics import tile_average_precision  # noqa: E402
 from models import TileStudent  # noqa: E402
+from teachers import build_teacher  # noqa: E402
 from tile_dataset import (  # noqa: E402
     AugmentConfig,
     TileData,
@@ -57,6 +58,7 @@ class TrainConfig:
     """Everything needed to reproduce one run."""
 
     run_id: str = "control_s0"
+    model: str = "student"             # "student" (Stage 2) or "teacher" (KD)
 
     # --- the setting under test -------------------------------------------
     representation: str = "A"          # A: test only, B: +template, C: +XOR
@@ -92,6 +94,10 @@ class TrainConfig:
             raise ValueError(f"representation must be A, B or C, got {self.representation!r}")
         if self.loss_kind not in LOSS_KINDS:
             raise ValueError(f"loss_kind must be one of {LOSS_KINDS}")
+        if self.model not in ("student", "teacher"):
+            raise ValueError(f"model must be 'student' or 'teacher', got {self.model!r}")
+        if self.model == "teacher" and self.loss_config().needs_teacher:
+            raise ValueError("a teacher cannot be trained with a distillation loss")
         if self.epochs < 1:
             raise ValueError("epochs must be >= 1")
 
@@ -116,6 +122,45 @@ class TrainConfig:
     @classmethod
     def load(cls, path: str | Path) -> "TrainConfig":
         return cls(**json.loads(Path(path).read_text()))
+
+
+RESUME_FILE = "state.pt"
+
+
+def save_resume_state(run_dir: Path, model, optimiser, epoch: int,
+                      history: list, best_ap: float, best_epoch: int,
+                      since_best: int) -> None:
+    """Snapshot after each epoch so a restart does not lose the run.
+
+    A teacher run takes hours on CPU and this session's worker has already been
+    restarted mid-sweep more than once, so losing a run to that is a real cost,
+    not a hypothetical one. Written to a temporary file and moved into place so
+    a crash during the write cannot leave a half-written snapshot.
+    """
+    tmp = run_dir / (RESUME_FILE + ".tmp")
+    torch.save({
+        "epoch": epoch,
+        "model": model.state_dict(),
+        "optimiser": optimiser.state_dict(),
+        "history": [asdict(r) for r in history],
+        "best_ap": best_ap,
+        "best_epoch": best_epoch,
+        "since_best": since_best,
+        "torch_rng": torch.get_rng_state(),
+    }, tmp)
+    tmp.replace(run_dir / RESUME_FILE)
+
+
+def load_resume_state(run_dir: Path, model, optimiser):
+    """Restore a snapshot, or return None if there is none to restore."""
+    path = run_dir / RESUME_FILE
+    if not path.exists():
+        return None
+    state = torch.load(path, map_location="cpu", weights_only=False)
+    model.load_state_dict(state["model"])
+    optimiser.load_state_dict(state["optimiser"])
+    torch.set_rng_state(state["torch_rng"])
+    return state
 
 
 @dataclass
@@ -177,6 +222,18 @@ def _head(fold: TileData, n: int) -> TileData:
     )
 
 
+def build_model(config: TrainConfig) -> torch.nn.Module:
+    """The network this run trains.
+
+    The teacher is trained by the same loop as the student, on the same data,
+    split and schedule, so that "the teacher is better" is a statement about
+    capacity and input resolution rather than about training setup.
+    """
+    if config.model == "teacher":
+        return build_teacher(config.in_channels)
+    return TileStudent(in_channels=config.in_channels)
+
+
 def load_teacher(config: TrainConfig, device: torch.device):
     """The teacher for the KD runs.
 
@@ -188,8 +245,6 @@ def load_teacher(config: TrainConfig, device: torch.device):
         return None
     if not config.teacher_ckpt:
         raise ValueError(f"loss_kind={config.loss_kind!r} requires --teacher-ckpt")
-    from teachers import build_teacher  # imported lazily; not needed by the control
-
     teacher = build_teacher(config.in_channels)
     teacher.load_state_dict(torch.load(config.teacher_ckpt, map_location="cpu"))
     teacher.to(device).eval()
@@ -221,8 +276,12 @@ def evaluate(model, loader, loss_fn, device, teacher=None) -> tuple[float, np.nd
     return total_loss / max(n_batches, 1), per_class, macro
 
 
-def train(config: TrainConfig, verbose: bool = True) -> dict:
-    """Run one training job. Returns the history and the best metrics."""
+def train(config: TrainConfig, verbose: bool = True, resume: bool = True) -> dict:
+    """Run one training job. Returns the history and the best metrics.
+
+    With ``resume`` (the default) an interrupted run continues from its
+    per-epoch snapshot rather than starting over.
+    """
     set_seed(config.seed)
     device = torch.device(config.device)
     run_dir = config.run_dir
@@ -230,7 +289,7 @@ def train(config: TrainConfig, verbose: bool = True) -> dict:
     config.save(run_dir / "config.json")
 
     train_ds, train_loader, val_loader, class_weights = make_loaders(config)
-    model = TileStudent(in_channels=config.in_channels).to(device)
+    model = build_model(config).to(device)
     teacher = load_teacher(config, device)
     loss_fn = MaskedTileLoss(config.loss_config(),
                              torch.as_tensor(class_weights, dtype=torch.float32)
@@ -250,15 +309,29 @@ def train(config: TrainConfig, verbose: bool = True) -> dict:
 
     history: list[EpochRecord] = []
     best_ap, best_epoch, since_best = -np.inf, -1, 0
+    start_epoch = 0
+
+    if resume:
+        state = load_resume_state(run_dir, model, optimiser)
+        if state is not None:
+            start_epoch = state["epoch"] + 1
+            history = [EpochRecord(**r) for r in state["history"]]
+            best_ap, best_epoch = state["best_ap"], state["best_epoch"]
+            since_best = state["since_best"]
+            if verbose:
+                print(f"resuming {config.run_id} at epoch {start_epoch} "
+                      f"(best val_mAP {best_ap:.4f} at epoch {best_epoch})")
 
     if verbose:
-        print(f"run {config.run_id}: {config.loss_kind} loss, input "
+        n_params = sum(p.numel() for p in model.parameters())
+        print(f"run {config.run_id}: {config.model}, {config.loss_kind} loss, input "
               f"{config.representation} ({config.in_channels}ch), seed {config.seed}")
-        print(f"  {len(train_ds)} train images x {train_ds.data.n_tiles} tiles, "
-              f"{steps_per_epoch} steps/epoch, device {config.device}")
+        print(f"  {n_params:,} parameters, {len(train_ds)} train images x "
+              f"{train_ds.data.n_tiles} tiles, {steps_per_epoch} steps/epoch, "
+              f"device {config.device}")
         print(f"  class_pos_weights {np.array2string(class_weights, precision=1)}")
 
-    for epoch in range(config.epochs):
+    for epoch in range(start_epoch, config.epochs):
         started = time.time()
         lr = lr_at(epoch)
         for group in optimiser.param_groups:
@@ -308,6 +381,9 @@ def train(config: TrainConfig, verbose: bool = True) -> dict:
                   f"val {val_loss:.4f}  val_mAP {macro_ap:.4f}  "
                   f"{record.seconds:.1f}s{mark}")
 
+        save_resume_state(run_dir, model, optimiser, epoch, history,
+                          best_ap, best_epoch, since_best)
+
         if since_best >= config.early_stop_patience:
             if verbose:
                 print(f"  early stop: no improvement for "
@@ -324,6 +400,8 @@ def train(config: TrainConfig, verbose: bool = True) -> dict:
         "class_pos_weights": [float(v) for v in class_weights],
     }
     (run_dir / "metrics.json").write_text(json.dumps(result, indent=2) + "\n")
+    # The run is complete; the snapshot is only needed to recover an unfinished one.
+    (run_dir / RESUME_FILE).unlink(missing_ok=True)
     if verbose:
         print(f"  best val_mAP {best_ap:.4f} at epoch {best_epoch}; "
               f"wrote {run_dir}/best.pt")
@@ -335,6 +413,7 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", default=None, help="reproduce a run from its config.json")
     ap.add_argument("--run-id")
+    ap.add_argument("--model", choices=["student", "teacher"])
     ap.add_argument("--representation", choices=["A", "B", "C"])
     ap.add_argument("--loss", dest="loss_kind", choices=list(LOSS_KINDS))
     ap.add_argument("--alpha", type=float)

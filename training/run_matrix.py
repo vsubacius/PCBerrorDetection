@@ -34,6 +34,19 @@ from train import TrainConfig, train  # noqa: E402
 
 SEEDS = (0, 1, 2)
 
+#: Input mode frozen at the step-8 checkpoint (2026-11-04) from the input
+#: ablation: modes B and C tied within seed noise (macro AP 0.7994 +/-0.0221 vs
+#: 0.8050 +/-0.0333), and C was chosen because Stage 1 already thresholds the
+#: eroded XOR, so both stages see the same difference signal.
+REFERENCE_MODE = "C"
+
+#: Starting points for the defect-aware KD hyperparameters. The plan requires
+#: these to be tuned on validation and the search logged; these are the values
+#: the first pass uses, not a tuned result.
+DEFAULT_ALPHA = 3.0
+DEFAULT_LAMBDA = 1.0
+DEFAULT_TEMPERATURE = 2.0
+
 
 def control_runs() -> list[TrainConfig]:
     """The naive baseline: all 25 tiles, test-only input, plain masked BCE."""
@@ -54,9 +67,53 @@ def input_ablation_runs() -> list[TrainConfig]:
     return runs
 
 
+def teacher_runs() -> list[TrainConfig]:
+    """The distillation teachers, one per seed, on the frozen input mode.
+
+    Trained by the same loop, data, split and schedule as the students, so
+    "the teacher is better" is a statement about capacity and input resolution
+    rather than about training setup.
+    """
+    return [TrainConfig(run_id=f"teacher_s{s}", model="teacher",
+                        representation=REFERENCE_MODE, loss_kind="plain",
+                        seed=s) for s in SEEDS]
+
+
+def reweight_only_runs() -> list[TrainConfig]:
+    """Weighted BCE with no teacher: does weighting alone explain a gain?"""
+    return [TrainConfig(run_id=f"reweight_only_s{s}", representation=REFERENCE_MODE,
+                        loss_kind="reweighted", alpha=DEFAULT_ALPHA,
+                        use_class_weights=True, seed=s) for s in SEEDS]
+
+
+def kd_runs() -> list[TrainConfig]:
+    """The prior-method comparison and the novel contribution.
+
+    Both use the *same* teacher for a given seed, so the only difference
+    between them is the defect-tile weight.
+    """
+    runs = []
+    for seed in SEEDS:
+        teacher = f"runs/teacher_s{seed}/best.pt"
+        runs.append(TrainConfig(
+            run_id=f"hinton_kd_s{seed}", representation=REFERENCE_MODE,
+            loss_kind="hinton_kd", lam=DEFAULT_LAMBDA,
+            temperature=DEFAULT_TEMPERATURE, use_class_weights=True,
+            teacher_ckpt=teacher, seed=seed))
+        runs.append(TrainConfig(
+            run_id=f"defect_kd_s{seed}", representation=REFERENCE_MODE,
+            loss_kind="defect_kd", alpha=DEFAULT_ALPHA, lam=DEFAULT_LAMBDA,
+            temperature=DEFAULT_TEMPERATURE, use_class_weights=True,
+            teacher_ckpt=teacher, seed=seed))
+    return runs
+
+
 RUN_SETS = {
     "control": control_runs,
     "input_ablation": input_ablation_runs,
+    "teacher": teacher_runs,
+    "reweight_only": reweight_only_runs,
+    "kd": kd_runs,
 }
 
 
@@ -81,12 +138,24 @@ def main() -> None:
         config.num_workers = args.num_workers
         config.epochs = args.epochs
 
+    missing_teachers = sorted({
+        c.teacher_ckpt for c in runs
+        if c.teacher_ckpt and not Path(c.teacher_ckpt).exists()
+    })
+    if missing_teachers:
+        print("\nMissing teacher checkpoints -- train them first with "
+              "`--set teacher`:")
+        for path in missing_teachers:
+            print(f"  {path}")
+        raise SystemExit(1)
+
     pending = [c for c in runs if args.force or not is_finished(c)]
     print(f"run set {args.run_set!r}: {len(runs)} jobs, {len(pending)} to run")
     for config in runs:
         state = "RUN " if config in pending else "skip"
-        print(f"  {state} {config.run_id:<16} input {config.representation}  "
-              f"{config.loss_kind:<10} seed {config.seed}")
+        print(f"  {state} {config.run_id:<18} {config.model:<8} input "
+              f"{config.representation}  {config.loss_kind:<10} "
+              f"alpha {config.alpha:<4g} seed {config.seed}")
     if args.dry_run:
         return
 
@@ -109,8 +178,13 @@ def main() -> None:
         if path.exists():
             data = json.loads(path.read_text())
             summary[config.run_id] = {
+                "model": config.model,
                 "representation": config.representation,
                 "loss_kind": config.loss_kind,
+                "alpha": config.alpha,
+                "lam": config.lam,
+                "temperature": config.temperature,
+                "use_class_weights": config.use_class_weights,
                 "seed": config.seed,
                 "best_val_macro_ap": data.get("best_val_macro_ap"),
                 "best_epoch": data.get("best_epoch"),
