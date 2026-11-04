@@ -10,6 +10,17 @@ run on hardware, and int8 quantization needs `esp-ppq`, which pins `python >=3.1
 
 Last updated 2026-11-04.
 
+### Run matrix status
+
+| row | state |
+| --- | --- |
+| `reference` | **done** — the `input_C` runs, macro AP 0.8050 ±0.0333 |
+| `reweight_only` | **done** — 0.7564 ±0.0253, *worse* than `reference` |
+| `hinton_kd` | blocked on the teachers (GPU) |
+| `defect_kd` | blocked on the teachers (GPU) |
+| `gate_only` | runtime switch on `reference`, no training needed |
+| `full` | runtime switch on `defect_kd` |
+
 ---
 
 ## 1. The tile grid: 160 px tiles, stride 120
@@ -167,7 +178,52 @@ gate and distillation results will need care.
 
 ---
 
-## 5. Class imbalance: no balancing needed
+## 5. `reweight_only`: defect-tile weighting alone *hurts*
+
+```bash
+python training/run_matrix.py --set reweight_only
+python eval/compare_runs.py --runs runs/input_C_s* runs/reweight_only_s* --group-by loss_kind
+```
+
+Three seeds on the frozen input mode C, against `reference` (the `input_C` runs — same
+seeds, same everything but the loss):
+
+| run | macro AP | defect recall | precision | clean-board FA |
+| --- | --- | --- | --- | --- |
+| `reference` (plain BCE) | 0.8050 ±0.0333 | 86.27% ±9.30 | 56.6% ±12.7 | 4.3% ±0.6 |
+| `reweight_only` (α=3, class weights) | 0.7564 ±0.0253 | 74.77% ±5.62 | 62.6% ±7.5 | 3.7% ±1.2 |
+
+Weighted BCE **trades recall for precision and loses ranking quality overall**: −0.049 macro
+AP and −11.5 points of defect recall, for +6.0 points of precision.
+
+The aggregate gaps are only about 2σ against the seed spread, so the stronger evidence is
+the **consistency**: average precision is lower on *all six* classes.
+
+| | open | short | mousebite | spur | copper | pin-hole |
+| --- | --- | --- | --- | --- | --- | --- |
+| reweighted − plain | −0.041 | −0.052 | −0.071 | −0.088 | −0.012 | −0.028 |
+
+Six out of six in the same direction has probability 1/64 under a null of no effect, which
+is better evidence than the noisy aggregate.
+
+**Why this matters for the contribution.** This is exactly what the `reweight_only` row
+exists to establish: if `defect_kd` later beats `hinton_kd`, that gain **cannot** be
+attributed to defect-tile weighting on its own, because weighting on its own is harmful
+here. It makes the eventual KD claim stronger, not weaker.
+
+### Two limits on the claim
+
+1. **It changes two things at once.** The plan defines the reweighted loss as the
+   defect-tile weight α *times* per-class inverse-frequency weights, so this run moves both
+   away from `reference` together and cannot say which half does the damage.
+2. **α = 3 is an assumed starting value**, where the plan requires tuning it on validation.
+
+The `reweight_sweep` set addresses both — separating class weights from α, and trying
+α ∈ {1, 1.5, 3, 5} at one seed. **Direction-finding, not a reported result.**
+
+---
+
+## 6. Class imbalance: no balancing needed
 
 ```bash
 python eval/evaluate_run.py --run runs/control_s0 --fold val
@@ -207,7 +263,7 @@ false-alarm target has to be agreed before any recall figure is quoted.
 
 ---
 
-## 6. Deployment path: ESP-DL
+## 7. Deployment path: ESP-DL
 
 Verified against ESP-DL commit `5989f4a` (2026-11-02), on the PC only.
 
@@ -247,7 +303,7 @@ Two export traps found and fixed:
 
 ---
 
-## 7. Engineering measurements
+## 8. Engineering measurements
 
 | | before | after | command |
 | --- | --- | --- | --- |
@@ -263,7 +319,7 @@ transform depended on how many items had been drawn before it. It is now seeded 
 
 ---
 
-## 8. Not yet measured
+## 9. Not yet measured
 
 | | blocked on |
 | --- | --- |
@@ -271,5 +327,7 @@ transform depended on how many items had been drawn before it. It is now seeded 
 | on-device latency, SRAM/PSRAM, flash, energy | hardware access |
 | PC-vs-device parity (`dl::Model::test()`) | hardware access |
 | gate on/off latency and energy per board | hardware access |
-| `reference`, `gate_only`, `reweight_only`, `hinton_kd`, `defect_kd`, `full` | the frozen configuration, pending the quantization ablation |
-| teacher | trained, but not yet run |
+| `hinton_kd`, `defect_kd` | the teachers, which need a GPU — see `notebooks/02_train_teachers.ipynb` |
+| `gate_only`, `full` | runtime gate switches on `reference` / `defect_kd`; no training needed |
+| α, λ, T tuning | the plan requires tuning on validation with the search logged; current values are assumed starting points |
+| quantization method | `esp-ppq`, so `reference` is only half-frozen (input mode C is settled, PTQ vs QAT is not) |
