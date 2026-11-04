@@ -110,6 +110,17 @@ def kd_runs() -> list[TrainConfig]:
 
     Both use the *same* teacher for a given seed, so the only difference
     between them is the defect-tile weight.
+
+    Per-class inverse-frequency weights are **off** in both. The plan's `w`
+    bundles them with alpha, but measured at three seeds on the frozen input
+    mode they cost 0.046 macro AP (0.8028 +/- 0.0207 without them against
+    0.7564 +/- 0.0253 with), while alpha = 3 on its own is worth -0.002, a
+    tenth of the seed spread. Step 6 established that class balancing is not
+    needed for training to work, so it is optional rather than shared setup,
+    and this is a validation-driven configuration choice -- logged here, and
+    approved at the step-9 checkpoint on 2026-11-04 -- not a change to what
+    the rows mean. Both KD rows carry the same setting, so the
+    hinton-versus-defect comparison still isolates alpha exactly.
     """
     runs = []
     for seed in SEEDS:
@@ -117,12 +128,12 @@ def kd_runs() -> list[TrainConfig]:
         runs.append(TrainConfig(
             run_id=f"hinton_kd_s{seed}", representation=REFERENCE_MODE,
             loss_kind="hinton_kd", lam=DEFAULT_LAMBDA,
-            temperature=DEFAULT_TEMPERATURE, use_class_weights=True,
+            temperature=DEFAULT_TEMPERATURE, use_class_weights=False,
             teacher_ckpt=teacher, seed=seed))
         runs.append(TrainConfig(
             run_id=f"defect_kd_s{seed}", representation=REFERENCE_MODE,
             loss_kind="defect_kd", alpha=DEFAULT_ALPHA, lam=DEFAULT_LAMBDA,
-            temperature=DEFAULT_TEMPERATURE, use_class_weights=True,
+            temperature=DEFAULT_TEMPERATURE, use_class_weights=False,
             teacher_ckpt=teacher, seed=seed))
     return runs
 

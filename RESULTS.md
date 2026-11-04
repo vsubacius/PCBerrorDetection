@@ -15,7 +15,7 @@ Last updated 2026-11-04.
 | row | state |
 | --- | --- |
 | `reference` | **done** — the `input_C` runs, macro AP 0.8050 ±0.0333 |
-| `reweight_only` | **done** — 0.7564 ±0.0253, *worse* than `reference` |
+| `reweight_only` | **done** — the defect-tile weight alone has *no effect* (0.8028 ±0.0207) |
 | `hinton_kd` | blocked on the teachers (GPU) |
 | `defect_kd` | blocked on the teachers (GPU) |
 | `gate_only` | runtime switch on `reference`, no training needed |
@@ -178,7 +178,7 @@ gate and distillation results will need care.
 
 ---
 
-## 5. `reweight_only`: defect-tile weighting alone *hurts*
+## 5. `reweight_only`: the defect-tile weight does nothing; class weights hurt
 
 ```bash
 python training/run_matrix.py --set reweight_only
@@ -188,38 +188,56 @@ python eval/compare_runs.py --runs runs/input_C_s* runs/reweight_only_s* --group
 Three seeds on the frozen input mode C, against `reference` (the `input_C` runs — same
 seeds, same everything but the loss):
 
-| run | macro AP | defect recall | precision | clean-board FA |
-| --- | --- | --- | --- | --- |
-| `reference` (plain BCE) | 0.8050 ±0.0333 | 86.27% ±9.30 | 56.6% ±12.7 | 4.3% ±0.6 |
-| `reweight_only` (α=3, class weights) | 0.7564 ±0.0253 | 74.77% ±5.62 | 62.6% ±7.5 | 3.7% ±1.2 |
+The plan's reweighted loss bundles two things: the defect-tile weight α, and per-class
+inverse-frequency weights. Measured separately, they do very different things. Three seeds
+each, frozen input mode C:
 
-Weighted BCE **trades recall for precision and loses ranking quality overall**: −0.049 macro
-AP and −11.5 points of defect recall, for +6.0 points of precision.
+| run | α | class weights | macro AP | defect recall | precision |
+| --- | --- | --- | --- | --- | --- |
+| `reference` | 1 | off | 0.8050 ±0.0333 | 86.27% ±9.30 | 56.6% ±12.7 |
+| **`reweight_only`** (isolated) | **3** | **off** | **0.8028 ±0.0207** | — | — |
+| `reweight_only` (as specified) | 3 | on | 0.7564 ±0.0253 | 74.77% ±5.62 | 62.6% ±7.5 |
 
-The aggregate gaps are only about 2σ against the seed spread, so the stronger evidence is
-the **consistency**: average precision is lower on *all six* classes.
+**The defect-tile weight on its own does nothing: −0.002 macro AP, a tenth of the seed
+spread.** The per-class weights cost **−0.046**, about 2× the spread, and with them the
+full loss trades 11.5 points of defect recall for 6.0 points of precision while losing
+ranking quality on *all six* classes (−0.012 to −0.088; six of six in one direction is
+p≈1/64 under a null).
 
-| | open | short | mousebite | spur | copper | pin-hole |
-| --- | --- | --- | --- | --- | --- | --- |
-| reweighted − plain | −0.041 | −0.052 | −0.071 | −0.088 | −0.012 | −0.028 |
+### Localising it: an α sweep at one seed
 
-Six out of six in the same direction has probability 1/64 under a null of no effect, which
-is better evidence than the noisy aggregate.
+```bash
+python training/run_matrix.py --set reweight_sweep
+```
 
-**Why this matters for the contribution.** This is exactly what the `reweight_only` row
-exists to establish: if `defect_kd` later beats `hinton_kd`, that gain **cannot** be
-attributed to defect-tile weighting on its own, because weighting on its own is harmful
-here. It makes the eventual KD claim stronger, not weaker.
+| config | α | class weights | val mAP |
+| --- | --- | --- | --- |
+| `reference` | 1 | off | 0.8423 |
+| `rw_a3_nocw` | 3 | off | 0.8125 |
+| `reweight_only` | 3 | on | 0.7814 |
+| `rw_a15_cw` | 1.5 | on | 0.7544 |
+| `rw_a1_cw` | 1 | on | 0.7347 |
+| `rw_a5_cw` | 5 | on | 0.7104 |
 
-### Two limits on the claim
+Plausibly the positive weights of 13–17 push the model into over-prediction, which costs
+ranking quality even as it raises recall at a fixed threshold. With class weights **on**, α
+is non-monotone and peaks near 3 — so α is partly *compensating* for the harm the class
+weights do, which would have been invisible without separating the two.
 
-1. **It changes two things at once.** The plan defines the reweighted loss as the
-   defect-tile weight α *times* per-class inverse-frequency weights, so this run moves both
-   away from `reference` together and cannot say which half does the damage.
-2. **α = 3 is an assumed starting value**, where the plan requires tuning it on validation.
+**Consequence, approved at the step-9 checkpoint:** both KD rows run with per-class weights
+**off**. Step 6 established that class balancing is not needed for training to work, so it
+is optional rather than shared setup, and neither KD row should carry a component measured
+to cost 0.046 macro AP. Both carry the same setting, so the `hinton_kd`-versus-`defect_kd`
+comparison still isolates α exactly.
 
-The `reweight_sweep` set addresses both — separating class weights from α, and trying
-α ∈ {1, 1.5, 3, 5} at one seed. **Direction-finding, not a reported result.**
+**Why this matters for the contribution.** `reweight_only` is the row that tests whether
+defect-tile weighting alone explains any gain. It does not — in isolation it is worth
+nothing at all. So if `defect_kd` beats `hinton_kd`, that gain is attributable to the
+*interaction* of defect weighting with distillation, not to weighting on its own. That is a
+stronger claim than the plan anticipated.
+
+**Still owed:** α = 3 is from a one-seed sweep, and λ and T have never been tuned. The plan
+requires tuning all three on validation with the search logged.
 
 ---
 
