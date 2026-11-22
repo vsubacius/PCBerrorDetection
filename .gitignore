@@ -3,6 +3,8 @@ data/raw/
 data/DeepPCB
 data/DeepPCB/
 data/tiles/
+data/PKU-DATASET/
+data/tiles_pku/
 *.npz
 *.npy
 *.pt
