@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import multiprocessing
 import sys
 import time
 from dataclasses import asdict, dataclass, field
@@ -181,6 +182,46 @@ def set_seed(seed: int) -> None:
     np.random.seed(seed)
 
 
+#: A fold bigger than this cannot be handed to DataLoader workers on a
+#: spawn platform. Windows (and macOS) re-create each worker from scratch and
+#: pickle the dataset into them through a pipe; a multi-gigabyte array either
+#: truncates mid-transfer or trips the pipe's own limit. The failure is
+#: `OSError: [Errno 22]` in the parent and `UnpicklingError: pickle data was
+#: truncated` in the child, which says nothing about the real cause.
+#:
+#: 1.5 GB is below the PKU training fold (3,827 crops unpacked = 3.1 GB, which
+#: fails) and above DeepPCB's (800 images = 650 MB, which has always worked).
+MAX_WORKER_PICKLE_BYTES = 1_500_000_000
+
+
+def fold_bytes(*folds) -> int:
+    """Bytes the image arrays of these folds occupy in memory."""
+    total = 0
+    for fold in folds:
+        for array in (fold.test, fold.temp):
+            total += int(getattr(array, "nbytes", 0))
+    return total
+
+
+def safe_num_workers(requested: int, *folds, verbose: bool = True) -> int:
+    """``requested``, or 0 when the dataset is too large to pickle to workers.
+
+    Only applies where workers are spawned rather than forked. On Linux the
+    children inherit the arrays copy-on-write and nothing is pickled, so the
+    limit does not exist there and the requested count is honoured.
+    """
+    if requested <= 0 or multiprocessing.get_start_method(allow_none=True) == "fork":
+        return requested
+    size = fold_bytes(*folds)
+    if size <= MAX_WORKER_PICKLE_BYTES:
+        return requested
+    if verbose:
+        print(f"  dataset is {size / 1e9:.1f} GB in memory; running with "
+              f"num_workers=0 instead of {requested}, because this platform "
+              f"pickles it into every worker and the transfer fails", flush=True)
+    return 0
+
+
 def make_loaders(config: TrainConfig):
     """Train and validation loaders, plus the class weights from the train fold."""
     train_fold = TileData.load(config.npz, "train")
@@ -200,15 +241,17 @@ def make_loaders(config: TrainConfig):
     val_ds = TileImageDataset(val_fold, config.representation, aug=None,
                               seed=config.seed)
 
+    num_workers = safe_num_workers(config.num_workers, train_fold, val_fold)
+
     train_loader = torch.utils.data.DataLoader(
         train_ds, batch_size=config.batch_images, shuffle=True,
-        num_workers=config.num_workers, collate_fn=collate_tiles,
-        drop_last=False, persistent_workers=config.num_workers > 0,
+        num_workers=num_workers, collate_fn=collate_tiles,
+        drop_last=False, persistent_workers=num_workers > 0,
     )
     val_loader = torch.utils.data.DataLoader(
         val_ds, batch_size=config.batch_images, shuffle=False,
-        num_workers=config.num_workers, collate_fn=collate_tiles,
-        persistent_workers=config.num_workers > 0,
+        num_workers=num_workers, collate_fn=collate_tiles,
+        persistent_workers=num_workers > 0,
     )
     return train_ds, train_loader, val_loader, train_fold.class_pos_weights()
 

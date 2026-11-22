@@ -105,7 +105,7 @@ def reweight_only_nocw_runs() -> list[TrainConfig]:
             for s in SEEDS]
 
 
-def kd_runs() -> list[TrainConfig]:
+def kd_runs(out_dir: str = "runs") -> list[TrainConfig]:
     """The prior-method comparison and the novel contribution.
 
     Both use the *same* teacher for a given seed, so the only difference
@@ -124,7 +124,7 @@ def kd_runs() -> list[TrainConfig]:
     """
     runs = []
     for seed in SEEDS:
-        teacher = f"runs/teacher_s{seed}/best.pt"
+        teacher = f"{out_dir}/teacher_s{seed}/best.pt"
         runs.append(TrainConfig(
             run_id=f"hinton_kd_s{seed}", representation=REFERENCE_MODE,
             loss_kind="hinton_kd", lam=DEFAULT_LAMBDA,
@@ -181,17 +181,25 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--set", dest="run_set", required=True, choices=list(RUN_SETS))
     ap.add_argument("--out-dir", default="runs")
+    ap.add_argument("--npz", default=None,
+                    help="tile dataset; default is DeepPCB. Use "
+                         "data/tiles_pku/pku_tiles_t160_s120.npz for PKU, with "
+                         "--out-dir runs_pku so the two sets of results, and the "
+                         "two sets of teachers, never mix.")
     ap.add_argument("--num-workers", type=int, default=3)
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--force", action="store_true", help="rerun finished jobs")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    runs = RUN_SETS[args.run_set]()
+    factory = RUN_SETS[args.run_set]
+    runs = factory(args.out_dir) if factory is kd_runs else factory()
     for config in runs:
         config.out_dir = args.out_dir
         config.num_workers = args.num_workers
         config.epochs = args.epochs
+        if args.npz:
+            config.npz = args.npz
 
     missing_teachers = sorted({
         c.teacher_ckpt for c in runs
