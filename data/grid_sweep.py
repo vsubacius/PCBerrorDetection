@@ -25,7 +25,14 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import deeppcb  # noqa: E402
+import pku  # noqa: E402
 from deeppcb import CLASS_IDS, CLASS_NAMES  # noqa: E402
+
+#: Same two interchangeable dataset modules as build_tiles.py. The class ids
+#: are 1..6 in both; only the name of id 6 differs (pin-hole vs missing_hole),
+#: so the active module supplies the names.
+DATASETS = {"deeppcb": deeppcb, "pku": pku}
+DEFAULT_ROOTS = {"deeppcb": "data/DeepPCB", "pku": "data/PKU-crops"}
 from tiling import POS_THRESH, TileGrid, box_overlap_fracs, is_clean, label_tiles  # noqa: E402
 
 #: (tile, stride) candidates. 640 = 5*128, so several of these land on a 5x5
@@ -53,14 +60,14 @@ def collect_boxes(samples) -> np.ndarray:
     return np.concatenate(out, axis=0) if out else np.zeros((0, 6), dtype=np.int32)
 
 
-def box_stats(boxes: np.ndarray) -> str:
+def box_stats(boxes: np.ndarray, class_names: dict[int, str] = CLASS_NAMES) -> str:
     lines = ["defect box sizes (max of width/height, pixels):",
              f"  {'class':<12}{'n':>6}{'mean':>7}{'p50':>6}{'p90':>6}{'p99':>6}{'max':>6}"]
     maxdim = np.maximum(boxes[:, 2] - boxes[:, 0], boxes[:, 3] - boxes[:, 1])
     for cid in CLASS_IDS:
         m = maxdim[boxes[:, 4] == cid]
         lines.append(
-            f"  {CLASS_NAMES[cid]:<12}{len(m):>6}{m.mean():>7.1f}"
+            f"  {class_names[cid]:<12}{len(m):>6}{m.mean():>7.1f}"
             f"{np.percentile(m, 50):>6.0f}{np.percentile(m, 90):>6.0f}"
             f"{np.percentile(m, 99):>6.0f}{m.max():>6}"
         )
@@ -77,6 +84,7 @@ def evaluate_grid(
     samples,
     grid: TileGrid,
     pos_thresh: float = POS_THRESH,
+    class_names: dict[int, str] = CLASS_NAMES,
     tile_label_subset: int = 200,
 ) -> dict:
     """Containment + tile-population stats for one grid.
@@ -91,7 +99,7 @@ def evaluate_grid(
     per_class = {}
     for cid in CLASS_IDS:
         m = boxes[:, 4] == cid
-        per_class[CLASS_NAMES[cid]] = float((best[m] >= pos_thresh).mean())
+        per_class[class_names[cid]] = float((best[m] >= pos_thresh).mean())
 
     sub = samples[:tile_label_subset]
     n_clean = n_tiles_total = n_ign = 0
@@ -135,22 +143,30 @@ def format_table(rows: list[dict], pos_thresh: float) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--root", default="data/DeepPCB", help="DeepPCB clone directory")
-    ap.add_argument("--split", default="trainval", choices=["trainval", "test", "all"])
+    ap.add_argument("--dataset", default="deeppcb", choices=sorted(DATASETS))
+    ap.add_argument("--root", default=None, help="default: per dataset")
+    ap.add_argument("--split", default="trainval",
+                    choices=["trainval", "test", "all", "train", "val"])
     ap.add_argument("--pos-thresh", type=float, default=POS_THRESH)
     ap.add_argument("--download", action="store_true", help="clone the dataset if missing")
     args = ap.parse_args()
 
+    ds = DATASETS[args.dataset]
+    root = args.root or DEFAULT_ROOTS[args.dataset]
+    class_names = ds.CLASS_NAMES
     if args.download:
-        deeppcb.download(args.root)
-    samples = deeppcb.index(args.root, None if args.split == "all" else args.split)
+        ds.download(root if args.dataset == "deeppcb" else "data/PKU-DATASET")
+    split = None if args.split == "all" else args.split
+    if args.dataset == "pku" and split == "trainval":
+        split = "train"          # PKU has no trainval fold; its folds are by board
+    samples = ds.index(root, split)
     boxes = collect_boxes(samples)
     print(f"{len(samples)} images, {len(boxes)} defect boxes "
           f"({len(boxes) / len(samples):.2f} per image)\n")
-    print(box_stats(boxes), "\n")
+    print(box_stats(boxes, class_names), "\n")
 
     rows = [
-        evaluate_grid(boxes, samples, TileGrid(t, s), args.pos_thresh)
+        evaluate_grid(boxes, samples, TileGrid(t, s), args.pos_thresh, class_names)
         for t, s in DEFAULT_CANDIDATES
     ]
     print(format_table(rows, args.pos_thresh))
@@ -164,7 +180,7 @@ def main() -> None:
     )
 
     print("\nper-class reachability (%):")
-    names = [CLASS_NAMES[c] for c in CLASS_IDS]
+    names = [class_names[c] for c in CLASS_IDS]
     print(f"{'tile/stride':>12}" + "".join(f"{n:>11}" for n in names))
     for r in rows:
         g: TileGrid = r["grid"]

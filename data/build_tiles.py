@@ -41,16 +41,38 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import deeppcb  # noqa: E402
-from deeppcb import CLASS_IDS, CLASS_NAMES, IMAGE_SIZE, NUM_CLASSES  # noqa: E402
+import pku  # noqa: E402
+from deeppcb import IMAGE_SIZE  # noqa: E402
 from tiling import IGNORE_THRESH, POS_THRESH, TileGrid, is_clean, label_tiles  # noqa: E402
+
+#: The two datasets expose the same interface -- ``index()``, ``Sample`` with
+#: ``.name``, ``.group``, ``.split``, ``.boxes()`` and ``.load()``, and the
+#: same class-id block -- so everything below is written against the module
+#: rather than against DeepPCB. Both use 640x640 images and class ids 1..6,
+#: which is also what ``tiling.py`` assumes.
+DATASETS = {"deeppcb": deeppcb, "pku": pku}
+DEFAULT_ROOTS = {"deeppcb": "data/DeepPCB", "pku": "data/PKU-crops"}
+DEFAULT_OUTS = {"deeppcb": "data/tiles", "pku": "data/tiles_pku"}
 
 
 def assign_folds(samples, val_frac: float, seed: int, split_by: str) -> np.ndarray:
     """``(N,) <U5`` array of ``train`` / ``val`` / ``test`` per sample.
 
-    ``test`` is DeepPCB's official 500-image test split, untouched. ``val`` is
-    carved out of the official 1,000 trainval images only.
+    For DeepPCB, ``test`` is the official 500-image test split, untouched, and
+    ``val`` is carved out of the official 1,000 trainval images only.
+
+    ``--split-by board`` takes the folds as the sample already carries them and
+    re-splits nothing. That is how PKU is used: its folds are assigned per
+    physical board at conversion time, because 60-odd photographs of one board
+    share a layout and splitting them any other way leaks it across folds.
     """
+    if split_by == "board":
+        folds = np.array([s.split for s in samples], dtype="<U5")
+        present = sorted(set(folds.tolist()))
+        if not set(present) <= {"train", "val", "test"}:
+            raise ValueError(f"unexpected fold names with --split-by board: {present}")
+        return folds
+
     folds = np.array([s.split for s in samples], dtype=object)
     folds = np.where(folds == "test", "test", "train").astype("<U5")
 
@@ -62,7 +84,8 @@ def assign_folds(samples, val_frac: float, seed: int, split_by: str) -> np.ndarr
     elif split_by == "group":
         keys = np.array([samples[i].group for i in trainval_idx])
     else:
-        raise ValueError(f"split_by must be 'image' or 'group', got {split_by!r}")
+        raise ValueError(
+            f"split_by must be 'image', 'group' or 'board', got {split_by!r}")
 
     unique = np.unique(keys)
     rng.shuffle(unique)
@@ -76,6 +99,7 @@ def build(
     root: str,
     out_dir: str,
     grid: TileGrid,
+    dataset: str = "deeppcb",
     pos_thresh: float = POS_THRESH,
     ignore_thresh: float = IGNORE_THRESH,
     val_frac: float = 0.2,
@@ -84,7 +108,8 @@ def build(
     limit: int | None = None,
     binarize_threshold: int = 127,
 ) -> Path:
-    samples = deeppcb.index(root, None)
+    ds = DATASETS[dataset]
+    samples = ds.index(root, None)
     if limit:
         samples = samples[:limit]
     folds = assign_folds(samples, val_frac, seed, split_by)
@@ -93,15 +118,21 @@ def build(
     packed_w = (IMAGE_SIZE + 7) // 8
     images_test = np.zeros((n, IMAGE_SIZE, packed_w), dtype=np.uint8)
     images_temp = np.zeros((n, IMAGE_SIZE, packed_w), dtype=np.uint8)
-    y_all = np.zeros((n, grid.n_tiles, NUM_CLASSES), dtype=np.uint8)
-    ign_all = np.zeros((n, grid.n_tiles, NUM_CLASSES), dtype=np.uint8)
+    y_all = np.zeros((n, grid.n_tiles, ds.NUM_CLASSES), dtype=np.uint8)
+    ign_all = np.zeros((n, grid.n_tiles, ds.NUM_CLASSES), dtype=np.uint8)
     all_boxes: list[np.ndarray] = []
     box_image: list[np.ndarray] = []
 
     t0 = time.time()
     for i, s in enumerate(samples):
-        test = deeppcb.load_binary(s.test_path, binarize_threshold)
-        temp = deeppcb.load_binary(s.temp_path, binarize_threshold)
+        if dataset == "deeppcb":
+            # DeepPCB ships JPEGs of already-binary images, so the threshold
+            # is a re-threshold and is tunable. PKU crops are written binary
+            # by data/pku.py, which did its own (green-channel) binarization.
+            test = deeppcb.load_binary(s.test_path, binarize_threshold)
+            temp = deeppcb.load_binary(s.temp_path, binarize_threshold)
+        else:
+            test, temp = s.load(binarize=True)
         images_test[i] = np.packbits(test, axis=-1)
         images_temp[i] = np.packbits(temp, axis=-1)
 
@@ -126,10 +157,10 @@ def build(
 
     meta = {
         "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "dataset": "DeepPCB",
-        "dataset_url": deeppcb.DEEPPCB_URL,
+        "dataset": dataset,
+        "dataset_url": (deeppcb.DEEPPCB_URL if dataset == "deeppcb" else pku.PKU_URL),
         "image_size": IMAGE_SIZE,
-        "binarize_threshold": binarize_threshold,
+        "binarize_threshold": (binarize_threshold if dataset == "deeppcb" else None),
         "tile": grid.tile,
         "stride": grid.stride,
         "overlap": grid.overlap,
@@ -137,8 +168,8 @@ def build(
         "n_tiles": grid.n_tiles,
         "pos_thresh": pos_thresh,
         "ignore_thresh": ignore_thresh,
-        "class_ids": list(CLASS_IDS),
-        "class_names": [CLASS_NAMES[c] for c in CLASS_IDS],
+        "class_ids": list(ds.CLASS_IDS),
+        "class_names": [ds.CLASS_NAMES[c] for c in ds.CLASS_IDS],
         "val_frac": val_frac,
         "seed": seed,
         "split_by": split_by,
@@ -147,7 +178,7 @@ def build(
 
     out_dir_p = Path(out_dir)
     out_dir_p.mkdir(parents=True, exist_ok=True)
-    out = out_dir_p / f"deeppcb_tiles_t{grid.tile}_s{grid.stride}.npz"
+    out = out_dir_p / f"{dataset}_tiles_t{grid.tile}_s{grid.stride}.npz"
     np.savez_compressed(
         out,
         images_test=images_test,
@@ -164,11 +195,12 @@ def build(
     )
 
     print(f"\nwrote {out}  ({out.stat().st_size / 1e6:.0f} MB)")
-    print(summarize(y_all, ign_all, folds, grid))
+    print(summarize(y_all, ign_all, folds, grid, ds))
     return out
 
 
-def summarize(y: np.ndarray, ign: np.ndarray, folds: np.ndarray, grid: TileGrid) -> str:
+def summarize(y: np.ndarray, ign: np.ndarray, folds: np.ndarray, grid: TileGrid,
+              ds=deeppcb) -> str:
     """Human-readable label statistics, printed after a build."""
     lines = [f"\n{grid.describe()}"]
     lines.append(f"{'fold':>6}{'images':>8}{'tiles':>8}{'clean':>8}{'pos':>7}{'ign':>7}")
@@ -186,7 +218,7 @@ def summarize(y: np.ndarray, ign: np.ndarray, folds: np.ndarray, grid: TileGrid)
             f"{100 * ii.any(1).mean():>6.1f}%"
         )
     lines.append("\npositive tiles per class (train / val / test):")
-    for c, name in enumerate([CLASS_NAMES[i] for i in CLASS_IDS]):
+    for c, name in enumerate([ds.CLASS_NAMES[i] for i in ds.CLASS_IDS]):
         counts = [int(y[folds == f][..., c].sum()) for f in ("train", "val", "test")]
         lines.append(f"  {name:<12}" + " / ".join(f"{v:>6}" for v in counts))
     return "\n".join(lines)
@@ -194,8 +226,10 @@ def summarize(y: np.ndarray, ign: np.ndarray, folds: np.ndarray, grid: TileGrid)
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--root", default="data/DeepPCB")
-    ap.add_argument("--out", default="data/tiles")
+    ap.add_argument("--dataset", default="deeppcb", choices=sorted(DATASETS),
+                    help="deeppcb (default) or pku; pku needs data/pku.py --convert")
+    ap.add_argument("--root", default=None, help="default: per dataset")
+    ap.add_argument("--out", default=None, help="default: per dataset")
     ap.add_argument("--download", action="store_true")
     ap.add_argument("--tile", type=int, default=160)
     ap.add_argument("--stride", type=int, default=120)
@@ -203,21 +237,32 @@ def main() -> None:
     ap.add_argument("--ignore-thresh", type=float, default=IGNORE_THRESH)
     ap.add_argument("--val-frac", type=float, default=0.2)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--split-by", default="image", choices=["image", "group"])
+    ap.add_argument("--split-by", default=None, choices=["image", "group", "board"],
+                    help="default: image for deeppcb, board for pku")
     ap.add_argument("--limit", type=int, default=None, help="debug: first N images")
     args = ap.parse_args()
 
+    root = args.root or DEFAULT_ROOTS[args.dataset]
+    out = args.out or DEFAULT_OUTS[args.dataset]
+    split_by = args.split_by or ("board" if args.dataset == "pku" else "image")
+    if args.dataset == "pku" and split_by != "board":
+        print(f"warning: --split-by {split_by} on PKU splits one physical board "
+              f"across folds; 60-odd photos share a layout, so val will be "
+              f"optimistic.")
+
     if args.download:
-        deeppcb.download(args.root)
+        DATASETS[args.dataset].download(
+            root if args.dataset == "deeppcb" else "data/PKU-DATASET")
     build(
-        root=args.root,
-        out_dir=args.out,
+        root=root,
+        out_dir=out,
+        dataset=args.dataset,
         grid=TileGrid(args.tile, args.stride),
         pos_thresh=args.pos_thresh,
         ignore_thresh=args.ignore_thresh,
         val_frac=args.val_frac,
         seed=args.seed,
-        split_by=args.split_by,
+        split_by=split_by,
         limit=args.limit,
     )
 

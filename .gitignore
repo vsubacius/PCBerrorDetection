@@ -43,3 +43,4 @@ runs/**/state.pt
 runs/teacher*/*.pt
 !runs/**/best.pt
 runs/teacher*/best.pt
+data/PKU-crops/
