@@ -170,6 +170,73 @@ void flat_field(const uint8_t *src, int width, int height, int stride,
     }
 }
 
+void binarize_board(const uint8_t *red, const uint8_t *green, int width, int height,
+                    int stride, bool use_flat_field, int t_red, int t_green,
+                    uint8_t *dst, uint8_t *scratch,
+                    int *t_red_out, int *t_green_out)
+{
+    const uint8_t *r = red;
+    const uint8_t *g = green;
+    int src_stride = stride;
+
+    if (use_flat_field) {
+        const size_t plane = static_cast<size_t>(width) * static_cast<size_t>(height);
+        uint8_t *r_fix = scratch;
+        uint8_t *g_fix = scratch + plane;
+        int32_t *col_sums = reinterpret_cast<int32_t *>(scratch + 2 * plane);
+        flat_field(red, width, height, stride, kFlatFieldRadius, r_fix, col_sums);
+        flat_field(green, width, height, stride, kFlatFieldRadius, g_fix, col_sums);
+        r = r_fix;
+        g = g_fix;
+        src_stride = width;
+    }
+
+    if (t_red < 0) {
+        uint32_t hist[256];
+        histogram(r, width, height, src_stride, hist);
+        t_red = otsu_threshold(hist);
+    }
+
+    if (t_green < 0) {
+        // Otsu over the masked pixels only: the exposed metal is already
+        // decided by red, and leaving it in drags the green threshold up.
+        uint32_t hist[256] = {0};
+        bool any = false;
+        for (int y = 0; y < height; ++y) {
+            const uint8_t *rr = r + static_cast<size_t>(y) * src_stride;
+            const uint8_t *gg = g + static_cast<size_t>(y) * src_stride;
+            for (int x = 0; x < width; ++x) {
+                if (rr[x] <= t_red) {
+                    ++hist[gg[x]];
+                    any = true;
+                }
+            }
+        }
+        if (!any) {
+            histogram(g, width, height, src_stride, hist);
+        }
+        t_green = otsu_threshold(hist);
+    }
+
+    for (int y = 0; y < height; ++y) {
+        const uint8_t *rr = r + static_cast<size_t>(y) * src_stride;
+        const uint8_t *gg = g + static_cast<size_t>(y) * src_stride;
+        uint8_t *out = dst + static_cast<size_t>(y) * width;
+        for (int x = 0; x < width; ++x) {
+            const bool exposed = rr[x] > t_red;
+            const bool copper = exposed || (gg[x] > t_green);
+            out[x] = static_cast<uint8_t>(!copper);
+        }
+    }
+
+    if (t_red_out) {
+        *t_red_out = t_red;
+    }
+    if (t_green_out) {
+        *t_green_out = t_green;
+    }
+}
+
 int binarize(const uint8_t *gray, int width, int height, int stride,
              bool use_flat_field, bool invert, int threshold,
              uint8_t *dst, uint8_t *scratch)

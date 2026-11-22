@@ -15,6 +15,7 @@ sys.path.insert(0, str(_REPO / "data"))
 
 from binarize import (  # noqa: E402
     binarize,
+    binarize_board,
     box_blur,
     flat_field,
     histogram,
@@ -224,3 +225,44 @@ def test_binarize_uses_the_requested_channel():
     mask_g, _ = binarize(img, channel="g")
     assert mask_g[:, :4].sum() == 0
     assert mask_g[:, 4:].all()
+
+
+def test_binarize_board_needs_rgb():
+    with pytest.raises(ValueError):
+        binarize_board(np.zeros((8, 8), np.uint8))
+
+
+def test_binarize_board_finds_both_kinds_of_copper():
+    """Exposed pads (bright red) and masked traces (green over laminate)."""
+    h = w = 64
+    img = np.zeros((h, w, 3), np.uint8)
+    img[..., 0] = 8                       # green solder mask: red is nearly dark
+    img[..., 1] = 60                      # bare laminate under mask
+    img[20:30, 5:55, 1] = 140             # a trace: more green
+    img[40:50, 40:50] = (200, 200, 200)   # a tinned pad: bright everywhere
+
+    mask, (t_red, t_green) = binarize_board(img)
+    copper = mask == 0
+    assert copper[44, 44], "the exposed pad must be copper"
+    assert copper[25, 30], "the masked trace must be copper"
+    assert not copper[5, 5], "bare laminate must not be copper"
+    assert 8 <= t_red < 200 and 60 <= t_green < 140
+
+
+def test_binarize_board_ones_are_non_copper():
+    """DeepPCB's convention: its copper is black, so ones mean substrate."""
+    img = np.zeros((16, 16, 3), np.uint8)
+    img[..., 0] = 5
+    img[..., 1] = 40
+    img[:, 8:, 1] = 200                   # right half is copper under mask
+    mask, _ = binarize_board(img)
+    assert mask[:, :8].all() and not mask[:, 8:].any()
+
+
+def test_binarize_board_accepts_fixed_thresholds():
+    rng = np.random.default_rng(3)
+    img = rng.integers(0, 256, (24, 24, 3)).astype(np.uint8)
+    mask, used = binarize_board(img, thresholds=(120, 90))
+    assert used == (120, 90)
+    expected = ~((img[..., 0] > 120) | ((img[..., 1] > 90) & (img[..., 0] <= 120)))
+    assert np.array_equal(mask, expected.astype(np.uint8))

@@ -89,4 +89,38 @@ int binarize(const uint8_t *gray, int width, int height, int stride,
              bool use_flat_field, bool invert, int threshold,
              uint8_t *dst, uint8_t *scratch);
 
+// Copper map of a solder-masked board, from separate red and green planes.
+//
+// dst is 1 where there is NO copper, matching DeepPCB's files (its copper is
+// black) and therefore what the trained model expects.
+//
+//     copper = (red > t_red) | ((green > t_green) & (red <= t_red))
+//
+// Red finds exposed metal -- tinned pads read ~126 in red against ~5 for
+// green solder mask. Green then finds copper under the mask, which reflects
+// more green than bare laminate. A single global Otsu on green is cheaper and
+// was tried first; it fails outright on one of the ten PKU boards, where the
+// threshold lands inside the copper distribution and defects on traces
+// produce no XOR at all. data/binarize.py carries the measurements.
+//
+// t_red < 0 or t_green < 0 runs Otsu for that threshold -- the green one over
+// the masked pixels only. The live path passes both levels from the stored
+// template instead, so a defect cannot move the operating point.
+//
+// Needs binarize_board_scratch_bytes() of scratch. Returns nothing; the
+// thresholds used are written back through t_red_out / t_green_out when those
+// are non-null.
+constexpr size_t binarize_board_scratch_bytes(int width, int height, bool flat_field)
+{
+    // Two planes to flat-field instead of one, plus the column sums.
+    return flat_field ? (2u * static_cast<size_t>(width) * static_cast<size_t>(height)
+                         + static_cast<size_t>(width) * sizeof(int32_t))
+                      : 0u;
+}
+
+void binarize_board(const uint8_t *red, const uint8_t *green, int width, int height,
+                    int stride, bool use_flat_field, int t_red, int t_green,
+                    uint8_t *dst, uint8_t *scratch,
+                    int *t_red_out = nullptr, int *t_green_out = nullptr);
+
 }  // namespace pcb

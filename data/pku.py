@@ -58,7 +58,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from binarize import binarize  # noqa: E402
+from binarize import binarize_board  # noqa: E402
 
 Image.MAX_IMAGE_PIXELS = None
 
@@ -359,11 +359,11 @@ def convert(
         with Image.open(root / "PCB_USED" / f"{board}.JPG") as im:
             arr = np.asarray(im.convert("RGB"), dtype=np.uint8)
         arr = resample(arr, board_scale(board))
-        mask, threshold = binarize(arr, channel="g", invert=True)
-        templates[board] = (mask, threshold)
+        mask, thresholds = binarize_board(arr)
+        templates[board] = (mask, thresholds)
         print(f"  template {board}: {arr.shape[1]}x{arr.shape[0]} after "
-              f"{board_scale(board):.3f}x, otsu(g)={threshold}, copper "
-              f"{mask.mean():.1%}")
+              f"{board_scale(board):.3f}x, otsu(r,g)={thresholds}, copper "
+              f"{1 - mask.mean():.1%}")
 
     index_rows: list[dict] = []
     n_boxes_in = n_boxes_kept = 0
@@ -372,14 +372,13 @@ def convert(
 
     for i, (board, img_path, ann_path) in enumerate(samples):
         scale = board_scale(board)
-        temp_mask, threshold = templates[board]
+        temp_mask, thresholds = templates[board]
 
         with Image.open(img_path) as im:
             test_arr = np.asarray(im.convert("RGB"), dtype=np.uint8)
         _, raw_boxes = read_voc(ann_path)
         test_arr = resample(test_arr, scale)
-        test_mask, _ = binarize(test_arr, channel="g", invert=True,
-                                threshold=threshold)
+        test_mask, _ = binarize_board(test_arr, thresholds=thresholds)
 
         if test_mask.shape != temp_mask.shape:
             print(f"  skipping {img_path.name}: {test_mask.shape} vs template "
@@ -447,6 +446,7 @@ def convert(
                 "board": board,
                 "source": img_path.name,
                 "crop": [x0, y0],
+                "shift": [int(dx), int(dy)],
                 "fold": fold,
                 "n_boxes": int(len(local)),
             })
@@ -463,8 +463,8 @@ def convert(
         "target_pitch_px": TARGET_PITCH_PX,
         "target_px_per_mm": target_px_per_mm(),
         "board_pitch_px": BOARD_PITCH_PX,
-        "channel": "g",
-        "invert": True,
+        "binarization": "two-threshold (red for exposed metal, green under mask)",
+        "ones_are": "non-copper, matching DeepPCB",
         "keep_frac": KEEP_FRAC,
         "clean_ratio": clean_ratio,
         "class_ids": VOC_CLASS_IDS,

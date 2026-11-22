@@ -8,14 +8,13 @@ agree bit for bit. ``tests/test_binarize_parity.py`` checks that they do.
 
 The pipeline, in order:
 
-1. **Channel.** Take one channel of the RGB image. For PKU-Market-PCB this is
-   **green**, not red. Red separates the tinned pads from the board best (Otsu
-   bimodality 0.90 vs 0.64), which is the obvious criterion and the wrong one:
-   five of the six defect classes sit on traces *under* the green solder mask,
-   which red cannot see. On red, defect survival after the gate's erosion is
-   0-4.5% for every class except missing_hole; on green it is 87.5-100%.
-   Copper under mask reflects more green than bare laminate, so the green
-   channel recovers a trace map that looks like DeepPCB's.
+1. **Channel.** Both, in two steps -- see :func:`binarize_board`. Red finds
+   exposed metal (tinned pads read ~126 in red against ~5 for green solder
+   mask); green then finds copper *under* the mask, which reflects more green
+   than bare laminate. Neither channel alone is enough: red cannot see the
+   traces where five of the six defect classes live, and a single global Otsu
+   on green works on nine boards and fails completely on the tenth.
+   :func:`binarize` remains available as the single-channel primitive.
 2. **Flat field** (camera only). Subtract a box-blurred copy and re-centre:
    ``g - blur(g) + 128``. This removes the illumination gradient a desk lamp
    and the lens's own vignetting put across the frame, which otherwise moves
@@ -171,6 +170,68 @@ def otsu_threshold(gray_or_hist: np.ndarray) -> int:
             best_score = score
             best_t = t
     return best_t
+
+
+def binarize_board(
+    image: np.ndarray,
+    thresholds: tuple[int, int] | None = None,
+    use_flat_field: bool = False,
+    radius: int = FLAT_FIELD_RADIUS,
+) -> tuple[np.ndarray, tuple[int, int]]:
+    """Copper map of a solder-masked board. Returns ``(mask, (t_red, t_green))``.
+
+    ``mask`` is 1 where there is **no** copper, matching DeepPCB's files, whose
+    copper is black.
+
+    Two thresholds, because one does not work on all ten PKU boards:
+
+    1. ``red > t_red`` finds **exposed metal** -- tinned pads read ~126 in red
+       while green solder mask reads ~5, so red separates them almost
+       perfectly (Otsu bimodality 0.90).
+    2. Within the masked area, ``green > t_green`` finds **copper under the
+       mask**, which reflects more green than bare laminate.
+
+    A single global Otsu on green was tried first and fails on board 08: its
+    threshold lands at 106, inside the copper distribution rather than below
+    it, so traces are classified as laminate and a defect on a trace produces
+    no XOR at all. Measured defect survival after the gate's erosion, over
+    four classes and 99-101 boxes per board:
+
+        board 08    global green 4%    flat-field 100%   two-threshold 100%
+        board 01    global green 100%  flat-field  72%   two-threshold 100%
+        board 11    global green 100%  flat-field 100%   two-threshold 100%
+
+    Flat-fielding rescues 08 and then breaks 01, so it is not the fix either
+    -- it stays for camera frames, where the illumination gradient is real.
+    The two-threshold rule is the only one that holds on every board, at the
+    same noise floor (2-11 eroded pixels per 160x160 tile).
+
+    Cost on the chip: one extra histogram pass and one extra compare per
+    pixel. ``thresholds`` skips both Otsu passes, which is what the live path
+    does -- it reuses the levels stored with the golden template so a defect,
+    or a hand in frame, cannot move the operating point.
+    """
+    if image.ndim != 3 or image.shape[2] < 3:
+        raise ValueError(f"expected an (H, W, 3) RGB image, got {image.shape}")
+    red = to_channel(image, "r")
+    green = to_channel(image, "g")
+    if use_flat_field:
+        red = flat_field(red, radius)
+        green = flat_field(green, radius)
+
+    if thresholds is None:
+        t_red = otsu_threshold(red)
+        masked = red <= t_red
+        if masked.any():
+            t_green = otsu_threshold(histogram(green[masked]))
+        else:
+            t_green = otsu_threshold(green)
+    else:
+        t_red, t_green = (int(t) for t in thresholds)
+        masked = red <= t_red
+
+    copper = (red > t_red) | ((green > t_green) & masked)
+    return (~copper).astype(np.uint8), (int(t_red), int(t_green))
 
 
 def binarize(

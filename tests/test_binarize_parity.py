@@ -25,7 +25,7 @@ from PIL import Image
 _REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO / "data"))
 
-from binarize import binarize, to_channel  # noqa: E402
+from binarize import binarize, binarize_board, to_channel  # noqa: E402
 
 FW_DIR = _REPO / "firmware" / "pcb_bench" / "main"
 HARNESS = Path(__file__).resolve().parent / "binarize_parity_harness.cpp"
@@ -50,7 +50,8 @@ def run_firmware(binarize_binary, frames: np.ndarray, flat: bool = False,
                  invert: bool = False, threshold: int = -1):
     """Binarize a stack of (n, h, w) single-channel frames with the C++ code."""
     n, h, w = frames.shape
-    payload = (struct.pack("<iiiiii", w, h, n, int(flat), int(invert), threshold)
+    payload = (struct.pack("<iiiiiiii", 0, w, h, n, int(flat), int(invert),
+                           threshold, -1)
                + np.ascontiguousarray(frames, dtype=np.uint8).tobytes())
     done = subprocess.run([str(binarize_binary)], input=payload,
                           capture_output=True, check=True)
@@ -116,6 +117,71 @@ def test_matches_with_an_explicit_threshold(binarize_binary):
     for i, frame in enumerate(frames):
         want, _ = binarize(frame, threshold=137)
         assert np.array_equal(got[i], want)
+
+
+def run_firmware_board(binarize_binary, frames: np.ndarray, flat: bool = False,
+                       thresholds: tuple[int, int] = (-1, -1)):
+    """Run the two-threshold board path on a stack of (n, h, w, 3) RGB frames."""
+    n, h, w = frames.shape[:3]
+    planes = np.stack([frames[..., 0], frames[..., 1]], axis=1)   # (n, 2, h, w)
+    payload = (struct.pack("<iiiiiiii", 1, w, h, n, int(flat), 0,
+                           int(thresholds[0]), int(thresholds[1]))
+               + np.ascontiguousarray(planes, dtype=np.uint8).tobytes())
+    done = subprocess.run([str(binarize_binary)], input=payload,
+                          capture_output=True, check=True)
+    used, masks = [], []
+    plane = h * w
+    for i in range(n):
+        at = i * (8 + plane)
+        used.append(struct.unpack_from("<ii", done.stdout, at))
+        masks.append(np.frombuffer(done.stdout, np.uint8, plane, at + 8).reshape(h, w))
+    return used, np.stack(masks)
+
+
+def test_board_path_matches_on_random_rgb(binarize_binary):
+    rng = np.random.default_rng(10)
+    frames = rng.integers(0, 256, (5, 40, 56, 3)).astype(np.uint8)
+    used, got = run_firmware_board(binarize_binary, frames)
+    for i, frame in enumerate(frames):
+        want, want_t = binarize_board(frame)
+        assert tuple(used[i]) == want_t, f"thresholds differ on frame {i}"
+        assert np.array_equal(got[i], want), f"mask differs on frame {i}"
+
+
+def test_board_path_matches_with_given_thresholds(binarize_binary):
+    """What the live path does: both levels come from the stored template."""
+    rng = np.random.default_rng(11)
+    frames = rng.integers(0, 256, (3, 32, 32, 3)).astype(np.uint8)
+    used, got = run_firmware_board(binarize_binary, frames, thresholds=(100, 90))
+    assert all(tuple(u) == (100, 90) for u in used)
+    for i, frame in enumerate(frames):
+        want, _ = binarize_board(frame, thresholds=(100, 90))
+        assert np.array_equal(got[i], want)
+
+
+def test_board_path_matches_on_real_pku_photographs(binarize_binary):
+    """Real boards, including 08 -- the one a single green Otsu gets wrong."""
+    if not (PKU_ROOT / "PCB_USED").is_dir():
+        pytest.skip("PKU-Market-PCB not downloaded (python data/pku.py --download)")
+
+    frames = []
+    for board in ("01", "08", "11"):
+        path = PKU_ROOT / "PCB_USED" / f"{board}.JPG"
+        if not path.exists():
+            continue
+        with Image.open(path) as im:
+            arr = np.asarray(im.convert("RGB"), dtype=np.uint8)
+        h, w = arr.shape[:2]
+        frames.append(arr[h // 2:h // 2 + 240, w // 2:w // 2 + 240])
+    if not frames:
+        pytest.skip("no PKU templates found")
+
+    frames = np.stack(frames)
+    used, got = run_firmware_board(binarize_binary, frames)
+    for i, frame in enumerate(frames):
+        want, want_t = binarize_board(frame)
+        assert tuple(used[i]) == want_t, f"thresholds differ on board crop {i}"
+        assert np.array_equal(got[i], want), f"mask differs on board crop {i}"
 
 
 def test_matches_on_real_pku_crops(binarize_binary):

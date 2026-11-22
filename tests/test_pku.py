@@ -165,7 +165,7 @@ def test_converted_dataset_is_consistent():
 
     meta = pku.meta(PKU_CROPS)
     assert set(meta["test_boards"]) == boards["test"]
-    assert meta["invert"] is True and meta["channel"] == "g"
+    assert meta["ones_are"].startswith("non-copper")
 
     s = samples[0]
     test, temp = s.load()
