@@ -1,0 +1,268 @@
+<!DOCTYPE html><html lang="en"><head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PCB Lab - Inspection Workspace</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://code.iconify.design/iconify-icon/1.0.7/iconify-icon.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        base: '#0a0a0a',
+                        panel: '#141414',
+                        panelHover: '#1b1b1b',
+                        border: '#303030',
+                        textPrimary: '#f5f5f5',
+                        textSecondary: '#b8b8b8',
+                        copper: '#c9b8a0',
+                        copperTint: '#29241f',
+                        success: '#7cdbac',
+                        warning: '#f1c56b',
+                        error: '#ff8b83'
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'ui-monospace', 'SFMono-Regular', 'monospace']
+                    },
+                    spacing: {
+                        '1': '4px',
+                        '2': '8px',
+                        '3': '12px',
+                        '4': '16px',
+                        '6': '24px',
+                        '8': '32px'
+                    },
+                    borderRadius: {
+                        'panel': '12px',
+                        'control': '8px'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #0a0a0a;
+            color: #f5f5f5;
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            overflow: hidden;
+        }
+        .scrollbar-hide::-webkit-scrollbar {
+            display: none;
+        }
+        .scrollbar-hide {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="flex h-screen w-full bg-base text-textPrimary overflow-hidden" data-sd-id="1">
+
+        <!-- Sidebar Navigation -->
+        <aside class="w-16 flex-shrink-0 border-r border-border bg-panel flex flex-col items-center py-4 z-10" data-sd-id="2">
+            <div class="mb-8 text-copper" data-sd-id="3">
+                <iconify-icon icon="lucide:cpu" class="text-2xl"></iconify-icon>
+            </div>
+            <nav class="flex flex-col gap-4 w-full px-2" data-sd-id="4">
+                <a href="#" class="w-full aspect-square rounded-control bg-copperTint text-copper flex items-center justify-center transition-colors" title="Inspect" data-sd-id="5">
+                    <iconify-icon icon="lucide:microscope" class="text-xl"></iconify-icon>
+                </a>
+                <a href="#" class="w-full aspect-square rounded-control text-textSecondary hover:bg-panelHover hover:text-textPrimary flex items-center justify-center transition-colors" title="Benchmarks" data-sd-id="6">
+                    <iconify-icon icon="lucide:bar-chart-2" class="text-xl"></iconify-icon>
+                </a>
+                <a href="#" class="w-full aspect-square rounded-control text-textSecondary hover:bg-panelHover hover:text-textPrimary flex items-center justify-center transition-colors" title="Results" data-sd-id="7">
+                    <iconify-icon icon="lucide:folder-open" class="text-xl"></iconify-icon>
+                </a>
+            </nav>
+            <div class="mt-auto w-full px-2" data-sd-id="8">
+                <a href="#" class="w-full aspect-square rounded-control text-textSecondary hover:bg-panelHover hover:text-textPrimary flex items-center justify-center transition-colors" title="Settings" data-sd-id="9">
+                    <iconify-icon icon="lucide:settings" class="text-xl"></iconify-icon>
+                </a>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <div class="flex-1 flex flex-col min-w-0 overflow-hidden" data-sd-id="10">
+
+            <!-- Top Connection Toolbar -->
+            <header class="h-14 border-b border-border bg-panel flex items-center justify-between px-4 flex-shrink-0 z-10" data-sd-id="11">
+                <div class="flex items-center gap-4" data-sd-id="12">
+                    <h1 class="text-[16px] font-medium" data-sd-id="13">Inspection workspace</h1>
+                    <div class="h-4 w-px bg-border" data-sd-id="14"></div>
+                    <div class="flex items-center gap-2 text-[14px]" data-sd-id="15">
+                        <span class="flex items-center gap-1.5 text-textSecondary" data-sd-id="16">
+                            <span class="w-2 h-2 rounded-full bg-border" data-sd-id="17"></span>
+                            Disconnected
+                        </span>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-3" data-sd-id="18">
+                    <div class="flex items-center bg-base border border-border rounded-control overflow-hidden" data-sd-id="19">
+                        <select class="bg-transparent text-[14px] text-textPrimary py-1.5 pl-3 pr-8 appearance-none outline-none border-r border-border cursor-pointer hover:bg-panelHover transition-colors" data-sd-id="20">
+                            <option value="" data-sd-id="21">Select port...</option>
+                            <option value="COM3" data-sd-id="22">COM3 (USB Serial)</option>
+                            <option value="COM4" data-sd-id="23">COM4 (JTAG)</option>
+                        </select>
+                        <button class="px-3 py-1.5 text-textSecondary hover:text-textPrimary hover:bg-panelHover transition-colors flex items-center justify-center" title="Refresh ports" data-sd-id="24">
+                            <iconify-icon icon="lucide:refresh-cw" class="text-[16px]"></iconify-icon>
+                        </button>
+                    </div>
+                    <button class="bg-textPrimary text-base px-4 py-1.5 rounded-control text-[14px] font-medium hover:bg-white transition-colors" data-sd-id="25">
+                        Connect device
+                    </button>
+                </div>
+            </header>
+
+            <!-- Workspace Grid -->
+            <main class="flex-1 overflow-hidden flex flex-col lg:flex-row p-4 gap-4" data-sd-id="26">
+
+                <!-- Left Column: Canvas & Logs -->
+                <div class="flex-1 flex flex-col min-w-0 gap-4" data-sd-id="27">
+
+                    <!-- Inspection Canvas -->
+                    <section class="flex-1 bg-panel border border-border rounded-panel flex flex-col overflow-hidden" data-sd-id="28">
+                        <div class="h-10 border-b border-border flex items-center px-4 gap-6 text-[14px]" data-sd-id="29">
+                            <button class="text-copper border-b-2 border-copper h-full font-medium px-1" data-sd-id="30">Camera</button>
+                            <button class="text-textSecondary hover:text-textPrimary h-full px-1 transition-colors" data-sd-id="31">Reference</button>
+                            <button class="text-textSecondary hover:text-textPrimary h-full px-1 transition-colors" data-sd-id="32">XOR</button>
+                        </div>
+
+                        <div class="flex-1 flex items-center justify-center p-6 relative" data-sd-id="33">
+                            <div class="max-w-md text-center flex flex-col items-center" data-sd-id="34">
+                                <div class="w-16 h-16 rounded-full bg-panelHover border border-border flex items-center justify-center mb-4 text-textSecondary" data-sd-id="35">
+                                    <iconify-icon icon="lucide:usb" class="text-2xl"></iconify-icon>
+                                </div>
+                                <h2 class="text-[16px] font-medium mb-2" data-sd-id="36">Device disconnected</h2>
+                                <p class="text-[14px] text-textSecondary leading-relaxed" data-sd-id="37">
+                                    Connect an ESP32-S3 device via USB and select its port to begin inspection.
+                                    <br><br>
+                                    Note: Older firmware versions provide a center-crop score only, without defect localization bounding boxes.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="h-10 border-t border-border bg-base flex items-center px-4 justify-between text-[12px] text-textSecondary" data-sd-id="38">
+                            <div class="flex gap-4" data-sd-id="39">
+                                <span data-sd-id="40">Resolution: —</span>
+                                <span data-sd-id="41">Format: —</span>
+                            </div>
+                            <button disabled="" class="text-border flex items-center gap-1 cursor-not-allowed" data-sd-id="42">
+                                <iconify-icon icon="lucide:camera"></iconify-icon>
+                                Capture frame
+                            </button>
+                        </div>
+                    </section>
+
+                    <!-- Serial Evidence Log -->
+                    <section class="h-48 bg-panel border border-border rounded-panel flex flex-col overflow-hidden flex-shrink-0" data-sd-id="43">
+                        <div class="h-8 border-b border-border flex items-center justify-between px-4" data-sd-id="44">
+                            <span class="text-[12px] font-medium text-textSecondary uppercase tracking-wider" data-sd-id="45">Serial Evidence Log</span>
+                            <div class="flex gap-2" data-sd-id="46">
+                                <button class="text-textSecondary hover:text-textPrimary transition-colors" title="Clear log" data-sd-id="47">
+                                    <iconify-icon icon="lucide:trash-2" class="text-[14px]"></iconify-icon>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="flex-1 bg-base p-4 font-mono text-[12px] text-textSecondary overflow-y-auto" data-sd-id="48">
+                            <div class="opacity-50 italic" data-sd-id="49">Waiting for connection...</div>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- Right Column: Settings & Metrics -->
+                <div class="w-full lg:w-80 flex flex-col gap-4 flex-shrink-0 overflow-y-auto scrollbar-hide" data-sd-id="50">
+
+                    <!-- Benchmark Configuration -->
+                    <section class="bg-panel border border-border rounded-panel flex flex-col" data-sd-id="51">
+                        <div class="p-4 border-b border-border" data-sd-id="52">
+                            <h2 class="text-[14px] font-medium" data-sd-id="53">Benchmark configuration</h2>
+                            <p class="text-[12px] text-textSecondary mt-1" data-sd-id="54">Run reproducible performance tests.</p>
+                        </div>
+
+                        <div class="p-4 flex flex-col gap-4" data-sd-id="55">
+                            <div class="flex flex-col gap-2" data-sd-id="56">
+                                <label class="text-[12px] text-textSecondary" data-sd-id="57">Measured samples</label>
+                                <input type="number" value="30" class="bg-base border border-border rounded-control px-3 py-1.5 text-[14px] text-textPrimary outline-none focus:border-copper transition-colors w-full" data-sd-id="58">
+                            </div>
+
+                            <div class="flex flex-col gap-2" data-sd-id="59">
+                                <label class="text-[12px] text-textSecondary" data-sd-id="60">Warm-up samples</label>
+                                <input type="number" value="5" class="bg-base border border-border rounded-control px-3 py-1.5 text-[14px] text-textPrimary outline-none focus:border-copper transition-colors w-full" data-sd-id="61">
+                            </div>
+
+                            <div class="pt-2" data-sd-id="62">
+                                <button disabled="" class="w-full bg-panelHover text-textSecondary border border-border rounded-control py-2 text-[14px] font-medium cursor-not-allowed flex items-center justify-center gap-2" data-sd-id="63">
+                                    <iconify-icon icon="lucide:play"></iconify-icon>
+                                    Start benchmark
+                                </button>
+                            </div>
+
+                            <div class="text-[12px] text-textSecondary mt-2" data-sd-id="64">
+                                <p data-sd-id="65">Note: Configuration labels record firmware settings; they do not alter on-device behavior.</p>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Metrics Summary -->
+                    <section class="bg-panel border border-border rounded-panel flex flex-col flex-1" data-sd-id="66">
+                        <div class="p-4 border-b border-border flex justify-between items-center" data-sd-id="67">
+                            <h2 class="text-[14px] font-medium" data-sd-id="68">Metrics summary</h2>
+                            <div class="flex gap-2" data-sd-id="69">
+                                <button disabled="" class="text-[12px] text-border flex items-center gap-1 cursor-not-allowed" title="Export CSV" data-sd-id="70">
+                                    <iconify-icon icon="lucide:download"></iconify-icon>
+                                    CSV
+                                </button>
+                                <button disabled="" class="text-[12px] text-border flex items-center gap-1 cursor-not-allowed" title="Export JSON" data-sd-id="71">
+                                    <iconify-icon icon="lucide:download"></iconify-icon>
+                                    JSON
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="p-4 flex flex-col gap-3" data-sd-id="72">
+                            <div class="flex justify-between items-center py-1 border-b border-border/50" data-sd-id="73">
+                                <span class="text-[12px] text-textSecondary" data-sd-id="74">Inference latency (median)</span>
+                                <span class="font-mono text-[14px]" data-sd-id="75">—</span>
+                            </div>
+                            <div class="flex justify-between items-center py-1 border-b border-border/50" data-sd-id="76">
+                                <span class="text-[12px] text-textSecondary" data-sd-id="77">Inference latency (p95)</span>
+                                <span class="font-mono text-[14px]" data-sd-id="78">—</span>
+                            </div>
+                            <div class="flex justify-between items-center py-1 border-b border-border/50" data-sd-id="79">
+                                <span class="text-[12px] text-textSecondary" data-sd-id="80">Inference capacity</span>
+                                <span class="font-mono text-[14px]" data-sd-id="81">—</span>
+                            </div>
+                            <div class="flex justify-between items-center py-1 border-b border-border/50" data-sd-id="82">
+                                <span class="text-[12px] text-textSecondary" data-sd-id="83">Free heap</span>
+                                <span class="font-mono text-[14px]" data-sd-id="84">—</span>
+                            </div>
+                            <div class="flex justify-between items-center py-1 border-b border-border/50" data-sd-id="85">
+                                <span class="text-[12px] text-textSecondary" data-sd-id="86">Min free heap</span>
+                                <span class="font-mono text-[14px]" data-sd-id="87">—</span>
+                            </div>
+                            <div class="flex justify-between items-center py-1" data-sd-id="88">
+                                <span class="text-[12px] text-textSecondary" data-sd-id="89">PSRAM</span>
+                                <span class="font-mono text-[14px]" data-sd-id="90">—</span>
+                            </div>
+                        </div>
+                        <div class="p-4 pt-0 mt-auto" data-sd-id="91">
+                            <p class="text-[12px] text-textSecondary italic" data-sd-id="92">
+                                * USB preview delay is distinct from on-device inference latency.
+                            </p>
+                        </div>
+                    </section>
+                </div>
+            </main>
+        </div>
+    </div>
+
+</body></html>

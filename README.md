@@ -12,7 +12,17 @@ novel contribution.
 
 See [`CLAUDE.md`](CLAUDE.md) for the full project plan, deliverables and timeline.
 
-## Status
+## Local USB dashboard
+
+The [PCB Lab dashboard](dashboard/README.md) provides a local browser interface
+for USB camera preview, serial evidence, timing runs, and CSV/JSON exports.
+It has separate lightweight dependencies and needs no model-training setup.
+The older camera protocol is supported; the XOR cascade currently exposes raw
+logs and memory readings pending its dedicated timing/image adapter.
+
+See the dashboard README for setup, supported protocols, and benchmark limits.
+
+## Implementation status
 
 | Milestone | State |
 | --- | --- |
