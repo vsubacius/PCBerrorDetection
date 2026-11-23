@@ -457,3 +457,69 @@ def test_average_precision_beats_chance_on_a_noisy_but_informative_score():
     _, macro = tile_average_precision(scores, targets,
                                       np.zeros_like(targets, bool))
     assert 0.2 < macro < 1.0
+
+
+# --- prevalence and lift ---------------------------------------------------
+#
+# The two datasets differ by 10.8x in positive rate, so a macro AP from one is
+# not a macro AP from the other. These pin the floor and the comparable form.
+
+def test_tile_prevalence_is_the_positive_rate():
+    from metrics import tile_prevalence
+
+    targets = np.zeros((200, 6))
+    targets[:20, 0] = 1                       # 10%
+    targets[:2, 3] = 1                        # 1%
+    ignore = np.zeros((200, 6), dtype=bool)
+
+    per_class, macro = tile_prevalence(targets, ignore)
+    assert per_class[0] == pytest.approx(0.10)
+    assert per_class[3] == pytest.approx(0.01)
+    assert per_class[1] == pytest.approx(0.0)
+    assert macro == pytest.approx(np.mean([0.10, 0.0, 0.0, 0.01, 0.0, 0.0]))
+
+
+def test_tile_prevalence_skips_ignored_entries():
+    from metrics import tile_prevalence
+
+    targets = np.zeros((100, 6))
+    targets[:10, 0] = 1
+    ignore = np.zeros((100, 6), dtype=bool)
+    ignore[:50, 0] = True                     # hides half the tiles, all positive
+    per_class, _ = tile_prevalence(targets, ignore)
+    assert per_class[0] == pytest.approx(0.0)
+
+    ignore[:50, 0] = False
+    ignore[50:, 0] = True                     # keeps the half holding every positive
+    per_class, _ = tile_prevalence(targets, ignore)
+    assert per_class[0] == pytest.approx(0.2)
+
+
+def test_prevalence_is_the_average_precision_of_a_random_ranker():
+    """The claim the lift rests on, checked rather than asserted."""
+    from metrics import tile_average_precision, tile_prevalence
+
+    rng = np.random.default_rng(0)
+    n = 20000
+    targets = np.zeros((n, 6))
+    targets[: int(0.03 * n), 0] = 1
+    rng.shuffle(targets[:, 0])
+    ignore = np.zeros((n, 6), dtype=bool)
+    scores = rng.random((n, 6))               # no information at all
+
+    per_class_ap, _ = tile_average_precision(scores, targets, ignore)
+    per_class_prev, _ = tile_prevalence(targets, ignore)
+    assert per_class_ap[0] == pytest.approx(per_class_prev[0], abs=0.01)
+
+
+def test_average_precision_lift_is_ap_over_prevalence():
+    from metrics import average_precision_lift
+
+    assert average_precision_lift(0.42, 0.0649) == pytest.approx(6.47, abs=0.01)
+    assert average_precision_lift(0.0677, 0.0060) == pytest.approx(11.28, abs=0.01)
+    # The headline point: the smaller AP is the better ranker.
+    assert average_precision_lift(0.0677, 0.0060) > average_precision_lift(0.42, 0.0649)
+
+    got = average_precision_lift(np.array([0.5, 0.2]), np.array([0.1, 0.0]))
+    assert got[0] == pytest.approx(5.0)
+    assert np.isnan(got[1])

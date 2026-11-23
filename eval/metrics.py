@@ -570,3 +570,55 @@ def tile_average_precision(
     finite = per_class[~np.isnan(per_class)]
     macro = float(finite.mean()) if finite.size else float("nan")
     return per_class, macro
+
+
+def tile_prevalence(
+    targets: np.ndarray,
+    ignore: np.ndarray,
+) -> tuple[np.ndarray, float]:
+    """Positive rate per class over non-ignored tile entries.
+
+    This is the average precision a *random* ranker scores, so it is the floor
+    any AP has to be read against. It exists because the two datasets in this
+    repo are nowhere near each other on it: DeepPCB's validation fold is 6.49%
+    positive per class and PKU's is 0.60%, a factor of 10.8. Comparing their
+    macro APs directly says almost nothing -- see :func:`average_precision_lift`.
+
+    Returns ``(per_class, macro)``; classes with no entries come back as NaN
+    and are excluded from the macro mean, matching tile_average_precision.
+    """
+    targets = np.asarray(targets, dtype=np.float64)
+    keep = ~np.asarray(ignore, dtype=bool)
+
+    per_class = np.full(NUM_CLASSES, np.nan)
+    for c in range(NUM_CLASSES):
+        mask = keep[:, c]
+        if mask.sum() == 0:
+            continue
+        per_class[c] = float((targets[mask, c] > 0).mean())
+
+    finite = per_class[~np.isnan(per_class)]
+    macro = float(finite.mean()) if finite.size else float("nan")
+    return per_class, macro
+
+
+def average_precision_lift(
+    average_precision: np.ndarray | float,
+    prevalence: np.ndarray | float,
+) -> np.ndarray | float:
+    """``AP / prevalence``: how many times better than chance the ranking is.
+
+    The comparable quantity across datasets with different positive rates. A
+    control student scoring 0.42 macro AP on DeepPCB (6.49% prevalence) and
+    one scoring 0.068 on PKU (0.60%) are 6.5x and 11.3x chance respectively --
+    the second is the *better* ranker, which the raw numbers hide completely.
+
+    Report the lift whenever two datasets are side by side, and the raw AP
+    within one dataset, where prevalence is held fixed and the lift adds
+    nothing.
+    """
+    ap = np.asarray(average_precision, dtype=np.float64)
+    prev = np.asarray(prevalence, dtype=np.float64)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        out = np.where(prev > 0, ap / prev, np.nan)
+    return float(out) if out.ndim == 0 else out
