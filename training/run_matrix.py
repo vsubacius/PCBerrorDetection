@@ -187,6 +187,10 @@ def main() -> None:
                          "--out-dir runs_pku so the two sets of results, and the "
                          "two sets of teachers, never mix.")
     ap.add_argument("--num-workers", type=int, default=3)
+    ap.add_argument("--device", default=None,
+                    help="cpu (default) or cuda. The teachers are only "
+                         "practical on a GPU: ResNet-18 is ~1.6 hours per "
+                         "epoch on the PKU fold on four CPU cores.")
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--force", action="store_true", help="rerun finished jobs")
     ap.add_argument("--dry-run", action="store_true")
@@ -200,6 +204,8 @@ def main() -> None:
         config.epochs = args.epochs
         if args.npz:
             config.npz = args.npz
+        if args.device:
+            config.device = args.device
 
     missing_teachers = sorted({
         c.teacher_ckpt for c in runs
