@@ -81,3 +81,48 @@ The toolchain checkpoint needs these four, from the serial log:
   interleaved per pixel, not planar. For 1 channel the layouts coincide.
 * **No sigmoid.** The model emits logits; the firmware compares against `log(p/(1-p))`.
   That keeps a quantized sigmoid out of the int8 graph entirely.
+
+## Live mode (camera + printed boards)
+
+At boot the firmware waits 3 s, prints a help menu and waits for commands.
+Run `python firmware/tools/monitor.py` (it reconnects after resets, sends what
+you type, and saves images to `captures/`).
+
+1. Print `prints/pcb_prints_42mm.pdf` (from `tools/make_prints.py`) at 100% scale.
+2. Put a sheet under the stand. Type `v` for a live view window (needs
+   `pip install opencv-python`): it says when all four corner squares are in
+   view and shows a focus score. Press Enter to stop. If the squares do not
+   fit, use the 30 mm sheets. `p` saves one full-quality frame instead.
+3. Optional: put a blank white sheet under the stand and type `w` (flat field).
+4. Type the board number printed above the pattern, then `c`.
+
+`c` aligns the frame to the stored template with the four corner squares, runs
+the model with the gate off and on, scores the result against that board's
+labels, and compares it with the stored copy of the same board (pixels that
+differ, defects found, decisions that changed). The monitor saves
+`boardN_compare_*.png` (live | stored | difference).
+
+`r` cycles the camera resolution (SVGA, XGA, UXGA); `b` runs the stored-image
+benchmark.
+
+### Live view shortcuts
+
+Inside the live view (`v`): `c` + Enter captures and tests without leaving the
+view (the view comes back afterwards), a board number + Enter picks the board,
+Enter alone or `q` stops the view.
+
+## Results files (for the report)
+
+`tools/monitor.py` saves every test as a row in `results/` (and all records in
+`results/results.jsonl`):
+
+| File | One row per | Rubric use |
+|---|---|---|
+| `session.csv` | boot | model flash size, input mode, camera, CPU MHz |
+| `bench_summary.csv` | `b` run | on-device recall/precision, decisions vs PC int8 (deployment degradation), latency per tile and board with the gate off/on (baseline vs cascade), gate speedup, peak SRAM/PSRAM |
+| `bench_board.csv` | board in a `b` run | the same, per board |
+| `live_capture.csv` | `c` capture | camera accuracy vs the stored image, alignment quality, capture/align/model times, memory |
+| `energy_run.csv` | `e` run | tiles per second; add the USB meter readings (running and idle) to get energy per tile |
+
+Energy (`e`): the model runs nonstop for 30 s, then the board idles for 30 s.
+Energy per tile = (running power - idle power) / tiles per second.

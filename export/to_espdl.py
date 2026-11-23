@@ -225,6 +225,7 @@ def calibration_batches(
     batch_size: int = 8,
     steps: int = 32,
     seed: int = 0,
+    representation: str | None = None,
 ) -> list[torch.Tensor]:
     """Calibration tiles for post-training quantization.
 
@@ -247,7 +248,14 @@ def calibration_batches(
 
     from tile_dataset import TileData
 
-    representation = {1: "A", 2: "B"}[in_channels]
+    # Mode C (test + XOR) also has 2 channels, so the caller must say which
+    # 2-channel mode it is: calibrating a C model on B tiles gives the second
+    # channel the wrong activation range.
+    representation = representation or {1: "A", 2: "B"}[in_channels]
+    expected = {"A": 1, "B": 2, "C": 2}[representation]
+    if expected != in_channels:
+        raise ValueError(f"representation {representation} has {expected} channels, "
+                         f"not {in_channels}")
     data = TileData.load(npz, "train")
     batches = []
     images = rng.permutation(len(data))
@@ -273,8 +281,16 @@ def quantize_to_espdl(
     quant_type: str = "w8a8",
     tile: int = TILE_SIZE,
     device: str = "cpu",
+    calib_algorithm: str = "percentile",
 ):
     """Quantize an ONNX graph to ``.espdl`` with ESP-PPQ.
+
+    ``calib_algorithm`` sets how activation ranges are chosen. ESP-PPQ's
+    ESP-DL default is ``"kl"``, which wrecks this student: on the validation
+    fold (input_C_s0, w8a8, esp32s3) it gives macro AP 0.292 against 0.842 in
+    float, while ``"percentile"`` gives 0.830 and ``"minmax"`` 0.829. Weights
+    are not the problem: w8a16 scores 0.840. So the default here is
+    ``"percentile"``.
 
     Writes three files beside ``espdl_path``: the ``.espdl`` binary, a ``.info``
     text dump (model structure, quantized weights, and the embedded test
@@ -292,6 +308,11 @@ def quantize_to_espdl(
         ) from exc
 
     Path(espdl_path).parent.mkdir(parents=True, exist_ok=True)
+    setting = None
+    if quant_type == "w8a8":
+        from esp_ppq import QuantizationSettingFactory
+        setting = QuantizationSettingFactory.espdl_setting(8)
+        setting.quantize_activation_setting.calib_algorithm = calib_algorithm
     return espdl_quantize_onnx(
         onnx_import_file=str(onnx_path),
         espdl_export_file=str(espdl_path),
@@ -300,6 +321,7 @@ def quantize_to_espdl(
         input_shape=[1, in_channels, tile, tile],
         target=target,
         quant_type=quant_type,
+        setting=setting,
         collate_fn=lambda batch: batch.to(device),
         device=device,
         error_report=True,
@@ -312,6 +334,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--in-channels", type=int, default=1, choices=[1, 2])
+    ap.add_argument("--representation", default=None, choices=["A", "B", "C"],
+                    help="input mode used for calibration; default A for 1 "
+                         "channel, B for 2. A mode-C model MUST pass C")
     ap.add_argument("--weights", default=None,
                     help="student .pt state_dict; omit for an untrained dry run")
     ap.add_argument("--out", default="export/artifacts")
@@ -323,6 +348,10 @@ def main() -> None:
     ap.add_argument("--quant-type", default="w8a8",
                     choices=["w8a8", "w8a16", "w16a16", "none"])
     ap.add_argument("--calib-steps", type=int, default=32)
+    ap.add_argument("--calib-algorithm", default="percentile",
+                    choices=["percentile", "minmax", "kl"],
+                    help="activation range method for w8a8; ESP-PPQ's 'kl' "
+                         "default loses 0.55 macro AP on this model")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--exporter", default="legacy", choices=["legacy", "dynamo"])
     args = ap.parse_args()
@@ -356,10 +385,12 @@ def main() -> None:
         print("\nWARNING: no --npz, calibrating on synthetic random tiles. "
               "Valid for a dry run, NOT for a reported result.")
     calib = calibration_batches(args.npz, args.in_channels,
-                                steps=args.calib_steps, seed=args.seed)
+                                steps=args.calib_steps, seed=args.seed,
+                                representation=args.representation)
     quantize_to_espdl(
         out / f"{name}.onnx", out / f"{name}.espdl", args.in_channels, calib,
         target=args.target, quant_type=args.quant_type,
+        calib_algorithm=args.calib_algorithm,
     )
     espdl = out / f"{name}.espdl"
     print(f"\n.espdl {espdl}  ({espdl.stat().st_size / 1024:.1f} KB)")

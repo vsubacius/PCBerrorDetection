@@ -1,5 +1,13 @@
 dependencies:
   idf:
     version: ">=5.3"
+  # Pinned. esp-dl v3.3.15 builds a float lookup table in a C++ global
+  # constructor (dl_base_attention_common.hpp, attention_float_exp_lut_data),
+  # which runs before FreeRTOS starts; ESP-IDF's coprocessor handler rejects
+  # FPU use outside a task, so the app panics at boot ("Coprocessor
+  # exception"). Seen in QEMU on 2026-11-18; v3.3.14 does not have the global.
   espressif/esp-dl:
-    version: "*"
+    version: "3.3.14"
+  # Camera driver for the XIAO's OV2640 / OV3660 (live mode). Tested at 2.1.9.
+  espressif/esp32-camera:
+    version: "2.1.9"

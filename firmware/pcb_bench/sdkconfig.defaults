@@ -21,3 +21,7 @@ CONFIG_FREERTOS_HZ=1000
 
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# The XIAO's USB-C port is the chip's USB-Serial/JTAG peripheral, not UART0,
+# so the log must go there or nothing shows up on the PC.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

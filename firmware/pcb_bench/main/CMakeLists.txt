@@ -9,14 +9,20 @@ elseif("___idf_esp-dl" IN_LIST component_targets)
 else()
     message(FATAL_ERROR "esp-dl component not found; run 'idf.py reconfigure'")
 endif()
-include(${espdl_dir}/fbs_loader/cmake/utilities.cmake)
+# utilities.cmake reads `cmake_dir` to find data_file_embed_asm_aligned.cmake.
+set(cmake_dir ${espdl_dir}/fbs_loader/cmake)
+include(${cmake_dir}/utilities.cmake)
 
-# Must match the asm symbol in main.cpp: _binary_student_c1_espdl_start
-set(embed_files ${CMAKE_CURRENT_LIST_DIR}/../models/student_c1.espdl)
+# Must match the asm symbols in main.cpp: _binary_student_c2_espdl_start and
+# _binary_boards_bin_start/_end. boards.bin comes from tools/make_boards.py.
+set(model_file ${CMAKE_CURRENT_LIST_DIR}/../models/student_c2.espdl)
+set(boards_file ${CMAKE_CURRENT_LIST_DIR}/../models/boards.bin)
 
 idf_component_register(
-    SRCS "main.cpp" "gate.cpp" "board.cpp"
+    SRCS "main.cpp" "gate.cpp" "board.cpp" "boards.cpp" "live.cpp" "camera.cpp"
     INCLUDE_DIRS "."
+    REQUIRES esp-dl esp_timer esp32-camera esp_driver_usb_serial_jtag
 )
 
-target_add_aligned_binary_data(${COMPONENT_LIB} ${embed_files} BINARY)
+target_add_aligned_binary_data(${COMPONENT_LIB} ${model_file} BINARY)
+target_add_aligned_binary_data(${COMPONENT_LIB} ${boards_file} BINARY)
